@@ -452,4 +452,5 @@ with tab_analise_tipo_maquina:
             title="Distribuição de Amostras por Categoria de Máquina", # Título ligeiramente alterado
             hole=0.3
         )
-        st.plotly_chart(figura_pizza
+        st.plotly_chart(figura_pizza)
+
