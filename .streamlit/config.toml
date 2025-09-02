@@ -7,5 +7,4 @@ enableCORS = false
 enableXsrfProtection = false
 
 [runner]
-# pythonVersion = "3.11" 
 pythonVersion = "3.12" 
