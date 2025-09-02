@@ -15,41 +15,74 @@ import os
 import json
 import time
 import subprocess
-import sys  # Adicionado import sys que estava faltando
+import sys
 import pkg_resources
 
-# --- Instalação de Dependências (melhorado para ser mais robusto) ---
-try:
-    required_packages = [
-        'scikit-learn==1.3.2',
-        'numpy==1.24.3',
-        'pandas==2.0.3',
-        'streamlit==1.26.0',
-        'plotly==5.15.0',
-        'requests==2.31.0',
-        'seaborn==0.13.0' # Adicionado seaborn para algumas visualizações
-    ]
-    
-    # Obter os pacotes já instalados e suas versões
+# --- Instalação de Dependências ---
+# Define um arquivo de "flag" para saber se a verificação e instalação já foram feitas na sessão atual
+INSTALL_FLAG_FILE = ".deps_installed_flag"
+
+def check_and_install_dependencies():
+    required_packages = {
+        'scikit-learn': '1.3.2',
+        'numpy': '1.24.3',
+        'pandas': '2.0.3',
+        'streamlit': '1.26.0',
+        'plotly': '5.15.0',
+        'requests': '2.31.0',
+        'seaborn': '0.13.0'
+    }
+
+    # Verifica se a flag já existe. Se sim, assume que as deps já foram tratadas.
+    if os.path.exists(INSTALL_FLAG_FILE):
+        return
+
     installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
     
     missing_or_wrong_version = []
-    for req in required_packages:
-        package_name, package_version = req.split('==')
-        if package_name not in installed_packages or installed_packages[package_name] != package_version:
-            missing_or_wrong_version.append(req)
+    for pkg_name, pkg_version in required_packages.items():
+        if pkg_name not in installed_packages or installed_packages[pkg_name] != pkg_version:
+            missing_or_wrong_version.append(f"{pkg_name}=={pkg_version}")
 
     if missing_or_wrong_version:
         st.warning(f"Instalando/Atualizando dependências: {', '.join(missing_or_wrong_version)}. Isso pode levar alguns instantes.")
-        python = sys.executable
-        # Usar --upgrade para garantir a versão correta
-        subprocess.check_call([python, '-m', 'pip', 'install', '--upgrade'] + missing_or_wrong_version, stdout=subprocess.DEVNULL)
-        st.success("Dependências instaladas/atualizadas com sucesso!")
-        # Reiniciar o Streamlit após a instalação para garantir que as novas versões sejam carregadas
-        st.experimental_rerun()
-except Exception as e:
-    st.error(f"Erro na verificação ou instalação de dependências: {e}")
-    st.stop() # Parar a execução se as dependências não puderem ser resolvidas
+        
+        # Cria um placeholder para mensagens de instalação
+        install_status = st.empty()
+        install_status.info("Iniciando instalação...")
+
+        try:
+            python = sys.executable
+            for req in missing_or_wrong_version:
+                install_status.info(f"Instalando {req}...")
+                # Captura a saída para depuração se necessário, mas oculta para o usuário
+                result = subprocess.run(
+                    [python, '-m', 'pip', 'install', '--upgrade', req],
+                    capture_output=True, text=True, check=True # check=True levanta exceção se houver erro
+                )
+                st.code(result.stdout) para ver o log de instalação
+                st.error(result.stderr) para ver erros específicos do pip
+
+            st.success("Dependências instaladas/atualizadas com sucesso!")
+            # Cria a flag para indicar que a instalação foi concluída
+            with open(INSTALL_FLAG_FILE, "w") as f:
+                f.write("Dependencies installed.")
+            
+            time.sleep(1) 
+            st.experimental_rerun()
+        except subprocess.CalledProcessError as e:
+            install_status.error(f"Erro ao instalar '{e.cmd[5]}'. Erro: {e.stderr}. Por favor, tente novamente ou verifique seu ambiente Python.")
+            st.stop()
+        except Exception as e:
+            install_status.error(f"Erro inesperado durante a instalação das dependências: {e}")
+            st.stop()
+    else:
+        # Se tudo estiver ok, cria a flag para evitar verificações futuras na mesma sessão
+        with open(INSTALL_FLAG_FILE, "w") as f:
+            f.write("Dependencies installed.")
+
+# Chama a função de verificação e instalação no início do script
+check_and_install_dependencies()
 
 # --- Configuração da Página Streamlit ---
 st.set_page_config(
@@ -571,4 +604,4 @@ else:
                 
                 # Matriz de Confusão
                 if rotulos_alvo is not None:
-                    fig_cm = plot
+                    fig_cm = plotar_matriz_confusao(y_teste, y_previsto
