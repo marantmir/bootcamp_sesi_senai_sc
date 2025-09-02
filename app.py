@@ -161,4 +161,5 @@ streamlit run app.py
 
 # Footer
 st.markdown("---")
-st.caption("© 2023 - Projeto de Data Science | Desenvolvido para aprendizado")
+st.caption("© 2025 - Projeto de Data Science | Desenvolvido para aprendizado")
+
