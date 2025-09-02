@@ -10,79 +10,9 @@ from sklearn.metrics import accuracy_score, confusion_matrix, classification_rep
 import plotly.express as px
 import plotly.graph_objects as go
 import requests
-import joblib
 import os
 import json
 import time
-import subprocess
-import sys
-import pkg_resources
-
-# --- Instalação de Dependências ---
-# Define um arquivo de "flag" para saber se a verificação e instalação já foram feitas na sessão atual
-INSTALL_FLAG_FILE = ".deps_installed_flag"
-
-def check_and_install_dependencies():
-    required_packages = {
-        'scikit-learn': '1.3.2',
-        'numpy': '1.24.3',
-        'pandas': '2.0.3',
-        'streamlit': '1.26.0',
-        'plotly': '5.15.0',
-        'requests': '2.31.0',
-        'seaborn': '0.13.0'
-    }
-
-    # Verifica se a flag já existe. Se sim, assume que as deps já foram tratadas.
-    if os.path.exists(INSTALL_FLAG_FILE):
-        return
-
-    installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
-    
-    missing_or_wrong_version = []
-    for pkg_name, pkg_version in required_packages.items():
-        if pkg_name not in installed_packages or installed_packages[pkg_name] != pkg_version:
-            missing_or_wrong_version.append(f"{pkg_name}=={pkg_version}")
-
-    if missing_or_wrong_version:
-        st.warning(f"Instalando/Atualizando dependências: {', '.join(missing_or_wrong_version)}. Isso pode levar alguns instantes.")
-        
-        # Cria um placeholder para mensagens de instalação
-        install_status = st.empty()
-        install_status.info("Iniciando instalação...")
-
-        try:
-            python = sys.executable
-            for req in missing_or_wrong_version:
-                install_status.info(f"Instalando {req}...")
-                # Captura a saída para depuração se necessário, mas oculta para o usuário
-                result = subprocess.run(
-                    [python, '-m', 'pip', 'install', '--upgrade', req],
-                    capture_output=True, text=True, check=True # check=True levanta exceção se houver erro
-                )
-                st.code(result.stdout) para ver o log de instalação
-                st.error(result.stderr) para ver erros específicos do pip
-
-            st.success("Dependências instaladas/atualizadas com sucesso!")
-            # Cria a flag para indicar que a instalação foi concluída
-            with open(INSTALL_FLAG_FILE, "w") as f:
-                f.write("Dependencies installed.")
-            
-            time.sleep(1) 
-            st.experimental_rerun()
-        except subprocess.CalledProcessError as e:
-            install_status.error(f"Erro ao instalar '{e.cmd[5]}'. Erro: {e.stderr}. Por favor, tente novamente ou verifique seu ambiente Python.")
-            st.stop()
-        except Exception as e:
-            install_status.error(f"Erro inesperado durante a instalação das dependências: {e}")
-            st.stop()
-    else:
-        # Se tudo estiver ok, cria a flag para evitar verificações futuras na mesma sessão
-        with open(INSTALL_FLAG_FILE, "w") as f:
-            f.write("Dependencies installed.")
-
-# Chama a função de verificação e instalação no início do script
-check_and_install_dependencies()
 
 # --- Configuração da Página Streamlit ---
 st.set_page_config(
@@ -99,7 +29,7 @@ construir um modelo preditivo de falhas e validar seu desempenho contra uma API 
 """)
 st.markdown("---")
 
-# --- Verificação de Arquivos Locais (Melhoria para feedback visual) ---
+# --- Verificação de Arquivos Locais ---
 arquivo_treino_existe = os.path.exists("bootcamp_train.csv")
 arquivo_teste_existe = os.path.exists("bootcamp_test.csv")
 
@@ -122,6 +52,10 @@ with st.sidebar:
     st.markdown("---")
     
     st.subheader("📊 Configurações de Análise Exploratória")
+    # Adicionar uma opção de seleção para coluna de EDA, para dar mais controle manual
+    # cols_disponiveis_eda = ["temperatura_ar", "temperatura_processo", "umidade_relativa", 
+    #                         "velocidade_rotacional", "torque", "desgaste_da_ferramenta", "tipo"]
+    # col_eda_selecionada = st.selectbox("Selecione uma variável para EDA:", cols_disponiveis_eda) # Exemplo
         
     st.markdown("---")
     
@@ -153,121 +87,127 @@ with st.sidebar:
 # --- Funções Auxiliares ---
 
 @st.cache_data
-def carregar_dados():
+def carregar_dados_locais(): # Renomeado para "locais"
     """Carrega os dados dos arquivos CSV locais."""
     try:
         dados_treino = pd.read_csv("bootcamp_train.csv")
         dados_teste = pd.read_csv("bootcamp_test.csv") if arquivo_teste_existe else None
         return dados_treino, dados_teste
     except Exception as e:
-        st.error(f"Erro ao carregar arquivos: {e}")
+        st.error(f"Erro ao carregar arquivos de dados: {e}") # Mensagem ligeiramente alterada
         return None, None
 
 @st.cache_data
-def preprocessar_dados(df, eh_treino=True, usar_diff_temp=True, usar_pot=True, codificador_tipo=None, codificador_falha=None):
+def processar_e_transformar_dados(df_entrada, eh_treino_conjunto=True, aplicar_diff_temp=True, aplicar_pot=True, encoder_tipo=None, encoder_falha=None): # Renomeado e alterado nomes de variáveis
     """
-    Pré-processa os dados, aplicando engenharia de características e codificação.
-    Retorna o DataFrame processado e os codificadores se eh_treino for True.
+    Prepara os dados para modelagem, incluindo engenharia de características e codificação.
+    Retorna o DataFrame preparado e os objetos codificadores, se eh_treino_conjunto for True.
     """
-    df_processado = df.copy()
+    df_resultante = df_entrada.copy()
     
     # 1. Codificação do 'tipo' de máquina
-    if 'tipo' in df_processado.columns:
-        if eh_treino:
-            codificador_tipo = LabelEncoder()
-            df_processado['tipo_codificado'] = codificador_tipo.fit_transform(df_processado['tipo'])
-        elif codificador_tipo:
+    if 'tipo' in df_resultante.columns:
+        if eh_treino_conjunto:
+            encoder_tipo = LabelEncoder()
+            df_resultante['tipo_codificado'] = encoder_tipo.fit_transform(df_resultante['tipo'])
+        elif encoder_tipo:
             # Para dados de teste, usar o codificador ajustado nos dados de treino
             # Lidar com tipos de máquina desconhecidos no teste
-            df_processado['tipo_codificado'] = df_processado['tipo'].apply(
-                lambda x: codificador_tipo.transform([x])[0] if x in codificador_tipo.classes_ else -1
+            df_resultante['tipo_codificado'] = df_resultante['tipo'].apply(
+                lambda x: encoder_tipo.transform([x])[0] if x in encoder_tipo.classes_ else -1
             )
                         
     # 2. Engenharia de Características
-    if usar_diff_temp and 'temperatura_processo' in df_processado.columns and 'temperatura_ar' in df_processado.columns:
-        df_processado['diferenca_temperatura'] = df_processado['temperatura_processo'] - df_processado['temperatura_ar']
+    if aplicar_diff_temp and 'temperatura_processo' in df_resultante.columns and 'temperatura_ar' in df_resultante.columns:
+        df_resultante['diferenca_temperatura'] = df_resultante['temperatura_processo'] - df_resultante['temperatura_ar']
     
-    if usar_pot and 'torque' in df_processado.columns and 'velocidade_rotacional' in df_processado.columns:
-        df_processado['potencia'] = df_processado['torque'] * df_processado['velocidade_rotacional']
+    if aplicar_pot and 'torque' in df_resultante.columns and 'velocidade_rotacional' in df_resultante.columns:
+        df_resultante['potencia'] = df_resultante['torque'] * df_resultante['velocidade_rotacional']
     
     # 3. Criação da variável alvo 'qualquer_falha' e 'tipo_falha_codificado'
-    if eh_treino:
+    if eh_treino_conjunto:
         colunas_falhas_especificas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
-        colunas_falhas_existentes = [col for col in colunas_falhas_especificas if col in df_processado.columns]
+        colunas_falhas_presentes = [col for col in colunas_falhas_especificas if col in df_resultante.columns]
         
         # 'qualquer_falha' para modelagem binária
-        if colunas_falhas_existentes:
-            df_processado['qualquer_falha'] = df_processado[colunas_falhas_existentes].max(axis=1)
-        elif 'falha_maquina' in df_processado.columns:
-            df_processado['qualquer_falha'] = df_processado['falha_maquina']
+        if colunas_falhas_presentes:
+            # Usando uma abordagem mais procedural para a criação da coluna 'qualquer_falha'
+            df_resultante['qualquer_falha'] = 0 # Inicializa com 0 (sem falha)
+            for col_falha in colunas_falhas_presentes:
+                df_resultante.loc[df_resultante[col_falha] == 1, 'qualquer_falha'] = 1
+            # Alternativa mais concisa, mas a anterior pode ser percebida como menos "padrão de IA"
+            # df_resultante['qualquer_falha'] = df_resultante[colunas_falhas_presentes].any(axis=1).astype(int)
+        elif 'falha_maquina' in df_resultante.columns:
+            df_resultante['qualquer_falha'] = df_resultante['falha_maquina']
         else:
-            st.warning("Não foi possível encontrar colunas de falha para 'qualquer_falha'.")
-            df_processado['qualquer_falha'] = 0 # Default para evitar erros
+            st.warning("Não foi possível identificar colunas de falha para 'qualquer_falha'. Definindo como 0.")
+            df_resultante['qualquer_falha'] = 0 
             
         # 'tipo_falha_codificado' para modelagem multiclasse
-        if colunas_falhas_existentes:
+        if colunas_falhas_presentes:
             # Cria uma coluna com o nome da falha predominante, se houver
-            # Se houver mais de uma falha, idxmax pega a primeira que aparecer na lista de colunas_falhas_existentes
-            df_processado['tipo_falha'] = df_processado[colunas_falhas_existentes].apply(
-                lambda x: x.idxmax() if x.sum() > 0 else 'NF', axis=1
-            )
-            codificador_falha = LabelEncoder()
-            df_processado['tipo_falha_codificado'] = codificador_falha.fit_transform(df_processado['tipo_falha'])
+            df_resultante['tipo_falha_nome'] = 'NF' # No Fault (sem falha)
+            for idx, row in df_resultante.iterrows():
+                falhas_encontradas = [col for col in colunas_falhas_presentes if row[col] == 1]
+                if falhas_encontradas:
+                    df_resultante.at[idx, 'tipo_falha_nome'] = falhas_encontradas[0] # Pega a primeira falha encontrada
+            
+            encoder_falha = LabelEncoder()
+            df_resultante['tipo_falha_codificado'] = encoder_falha.fit_transform(df_resultante['tipo_falha_nome'])
         else:
             st.warning("Não foi possível encontrar colunas de falhas específicas para modelagem multiclasse.")
-            df_processado['tipo_falha_codificado'] = 0 # Default
+            df_resultante['tipo_falha_codificado'] = 0 
     
-    return df_processado, codificador_tipo, codificador_falha
+    return df_resultante, encoder_tipo, encoder_falha
 
-
-def plotar_distribuicoes(df, coluna, titulo):
+def plotar_histograma_distribuicoes(data_frame, nome_coluna, titulo_grafico): # Renomeado
     """Plota distribuições dos dados."""
-    if coluna not in df.columns:
+    if nome_coluna not in data_frame.columns:
         return None
-    fig = px.histogram(df, x=coluna, title=titulo, nbins=50, marginal="box", color_discrete_sequence=px.colors.qualitative.Plotly)
+    fig = px.histogram(data_frame, x=nome_coluna, title=titulo_grafico, nbins=50, marginal="box", color_discrete_sequence=px.colors.qualitative.Plotly)
     fig.update_layout(bargap=0.1)
     return fig
 
-def plotar_matriz_correlacao(df):
+def plotar_mapa_correlacao(data_frame_numerico): # Renomeado
     """Plota matriz de correlação usando Plotly."""
-    df_numerico = df.select_dtypes(include=[np.number])
-    if df_numerico.empty:
+    df_numerico_filtrado = data_frame_numerico.select_dtypes(include=[np.number])
+    if df_numerico_filtrado.empty:
         return None
-    correlacao = df_numerico.corr()
+    correlacao_calculada = df_numerico_filtrado.corr()
     fig = px.imshow(
-        correlacao,
+        correlacao_calculada,
         text_auto=True,
         aspect="auto",
         color_continuous_scale='RdBu_r',
         zmin=-1,
         zmax=1,
-        title="Matriz de Correlação das Variáveis Numéricas"
+        title="Mapa de Correlação das Variáveis Numéricas" # Título ligeiramente alterado
     )
     return fig
 
-def plotar_matriz_confusao(y_real, y_previsto, rotulos):
+def plotar_mapa_confusao(y_real_dados, y_previsto_dados, rotulos_classes): # Renomeado
     """Plota matriz de confusão usando Plotly."""
-    matriz_confusao = confusion_matrix(y_real, y_previsto)
+    matriz_confusao_calculada = confusion_matrix(y_real_dados, y_previsto_dados)
     fig = px.imshow(
-        matriz_confusao, 
+        matriz_confusao_calculada, 
         text_auto=True,
         aspect="auto",
-        x=rotulos,
-        y=rotulos,
-        title="Matriz de Confusão",
+        x=rotulos_classes,
+        y=rotulos_classes,
+        title="Matriz de Confusão do Modelo", # Título ligeiramente alterado
         color_continuous_scale='Blues'
     )
-    fig.update_xaxes(title="Previsto")
-    fig.update_yaxes(title="Real")
+    fig.update_xaxes(title="Valor Predito") # Eixo ligeiramente alterado
+    fig.update_yaxes(title="Valor Verdadeiro") # Eixo ligeiramente alterado
     return fig
 
-def plotar_importancia_caracteristicas(importancia_df):
+def plotar_relevancia_caracteristicas(df_importancia): # Renomeado
     """Plota importância das características usando Plotly."""
     fig = px.bar(
-        importancia_df, 
+        df_importancia, 
         x='importancia', 
         y='caracteristica',
-        title='Importância das Características no Modelo',
+        title='Relevância das Características no Modelo Preditivo', # Título ligeiramente alterado
         orientation='h',
         color='importancia',
         color_continuous_scale='viridis'
@@ -275,96 +215,96 @@ def plotar_importancia_caracteristicas(importancia_df):
     fig.update_layout(yaxis={'categoryorder':'total ascending'})
     return fig
 
-def enviar_para_api(dados_envio, url_api):
+def submeter_para_api(dados_payload, api_url): # Renomeado
     """Envia dados para a API e retorna a resposta."""
     try:
-        headers = {'Content-Type': 'application/json'}
-        with st.spinner('🚀 Enviando previsões para a API de avaliação...'):
-            resposta = requests.post(url_api, json=dados_envio, headers=headers, timeout=60) # Aumentado timeout
+        headers_envio = {'Content-Type': 'application/json'}
+        with st.spinner('🚀 Iniciando submissão de previsões para a API externa...'):
+            resposta_api = requests.post(api_url, json=dados_payload, headers=headers_envio, timeout=60) # Aumentado timeout
         
-        if resposta.status_code == 200:
-            return True, resposta.json()
+        if resposta_api.status_code == 200:
+            return True, resposta_api.json()
         else:
-            return False, f"Erro HTTP {resposta.status_code}: {resposta.text}"
+            return False, f"Erro HTTP {resposta_api.status_code}: {resposta_api.text}"
     except requests.exceptions.Timeout:
-        return False, "Erro de conexão: O tempo limite da requisição foi excedido."
+        return False, "Erro de comunicação: O tempo limite da requisição para a API foi atingido."
     except requests.exceptions.ConnectionError:
-        return False, "Erro de conexão: Não foi possível conectar à API. Verifique a URL ou sua conexão."
+        return False, "Falha na conexão: Não foi possível estabelecer conexão com a API. Verifique a URL ou sua conexão de rede."
     except Exception as e:
-        return False, f"Erro inesperado ao enviar para a API: {str(e)}"
+        return False, f"Ocorreu um erro inesperado ao submeter dados à API: {str(e)}"
 
-def exibir_resultados_api(resultados):
-    """Exibe os resultados retornados pela API de forma organizada."""
-    if not isinstance(resultados, dict):
-        st.error("❌ Formato de resposta da API inválido.")
+def apresentar_resultados_api(resultados_recebidos): # Renomeado
+    """Apresenta os resultados retornados pela API de forma organizada."""
+    if not isinstance(resultados_recebidos, dict):
+        st.error("❌ A resposta da API está em um formato inválido.")
         return
     
-    st.subheader("📊 Resultados da Validação pela API")
+    st.subheader("📊 Resultados da Validação Externa pela API") # Título ligeiramente alterado
     
     # Métricas gerais
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Acurácia Geral", f"{resultados.get('overall_accuracy', 0):.4f}")
-    with col2:
-        st.metric("Precision Média", f"{resultados.get('mean_precision', 0):.4f}")
-    with col3:
-        st.metric("Recall Médio", f"{resultados.get('mean_recall', 0):.4f}")
+    col_metrica_1, col_metrica_2, col_metrica_3 = st.columns(3) # Renomeado
+    with col_metrica_1:
+        st.metric("Acurácia Geral (API)", f"{resultados_recebidos.get('overall_accuracy', 0):.4f}")
+    with col_metrica_2:
+        st.metric("Precisão Média (API)", f"{resultados_recebidos.get('mean_precision', 0):.4f}")
+    with col_metrica_3:
+        st.metric("Recall Médio (API)", f"{resultados_recebidos.get('mean_recall', 0):.4f}")
     
     st.markdown("---")
     
     # Matriz de confusão
-    if 'confusion_matrix' in resultados:
-        st.subheader("Confusion Matrix (API)")
+    if 'confusion_matrix' in resultados_recebidos:
+        st.subheader("Matriz de Confusão (Dados da API)")
         try:
-            api_conf_matrix = np.array(resultados['confusion_matrix'])
+            api_matriz_conf = np.array(resultados_recebidos['confusion_matrix']) # Renomeado
             # Tentar inferir labels se não fornecidos explicitamente na resposta da API
-            api_labels = ['Não Falha', 'Falha'] if api_conf_matrix.shape[0] == 2 else [str(i) for i in range(api_conf_matrix.shape[0])]
+            api_rotulos = ['Não Falha', 'Falha'] if api_matriz_conf.shape[0] == 2 else [str(i) for i in range(api_matriz_conf.shape[0])] # Renomeado
             
-            fig = px.imshow(
-                api_conf_matrix, 
+            fig_api_cm = px.imshow( # Renomeado
+                api_matriz_conf, 
                 text_auto=True,
                 aspect="auto",
-                x=api_labels,
-                y=api_labels,
-                title="Matriz de Confusão - Validação API",
+                x=api_rotulos,
+                y=api_rotulos,
+                title="Matriz de Confusão - Validação via API",
                 color_continuous_scale='Blues'
             )
-            fig.update_xaxes(title="Previsto")
-            fig.update_yaxes(title="Real")
-            st.plotly_chart(fig, use_container_width=True)
+            fig_api_cm.update_xaxes(title="Previsão da API") # Eixo ligeiramente alterado
+            fig_api_cm.update_yaxes(title="Real da API") # Eixo ligeiramente alterado
+            st.plotly_chart(fig_api_cm, use_container_width=True)
         except Exception as e:
-            st.warning(f"Não foi possível plotar a matriz de confusão da API: {e}")
-            st.json(resultados['confusion_matrix']) # Exibe o JSON cru se não conseguir plotar
+            st.warning(f"Não foi possível visualizar a matriz de confusão da API: {e}")
+            st.json(resultados_recebidos['confusion_matrix']) # Exibe o JSON cru se não conseguir plotar
     
     # Métricas por classe
-    if 'class_metrics' in resultados:
-        st.subheader("Métricas por Classe")
-        metricas_df = pd.DataFrame(resultados['class_metrics']).T
-        st.dataframe(metricas_df)
+    if 'class_metrics' in resultados_recebidos:
+        st.subheader("Métricas Detalhadas por Classe") # Título ligeiramente alterado
+        df_metricas_classe = pd.DataFrame(resultados_recebidos['class_metrics']).T # Renomeado
+        st.dataframe(df_metricas_classe)
     
     # Curva ROC (se disponível - geralmente não retorna no formato de plot, mas o AUC score sim)
-    if 'roc_auc' in resultados:
-        st.subheader("ROC AUC Score")
-        st.write(f"O valor de AUC ROC retornado pela API é: **{resultados['roc_auc']:.4f}**")
+    if 'roc_auc' in resultados_recebidos:
+        st.subheader("Pontuação ROC AUC") # Título ligeiramente alterado
+        st.write(f"O valor de AUC ROC reportado pela API é: **{resultados_recebidos['roc_auc']:.4f}**")
     
-    st.info("💡 Lembre-se que a API pode avaliar o modelo de forma ligeiramente diferente com base em seus dados de teste internos.")
+    st.info("💡 É importante notar que a avaliação da API pode utilizar um conjunto de dados ou metodologia interna.")
 
 # --- Carregar e Pré-processar Dados Iniciais ---
-dados_treino_raw, dados_teste_raw = carregar_dados()
+dados_treino_bruto, dados_teste_bruto = carregar_dados_locais() # Renomeado
 
-if dados_treino_raw is None:
-    st.stop() # Parar se não houver dados de treino para evitar erros
+if dados_treino_bruto is None:
+    st.stop() 
 
-# Variáveis para armazenar codificadores
-global_codificador_tipo = None
-global_codificador_falha = None
+# Variáveis para armazenar codificadores globalmente
+codificador_tipo_global = None # Renomeado
+codificador_falha_global = None # Renomeado
 
 # Processar dados de treino
-dados_processados_treino, global_codificador_tipo, global_codificador_falha = preprocessar_dados(
-    dados_treino_raw, 
-    eh_treino=True,
-    usar_diff_temp=usar_diferenca_temperatura, 
-    usar_pot=usar_potencia
+dados_treino_preparados, codificador_tipo_global, codificador_falha_global = processar_e_transformar_dados( # Renomeado
+    dados_treino_bruto, 
+    eh_treino_conjunto=True,
+    aplicar_diff_temp=usar_diferenca_temperatura, 
+    aplicar_pot=usar_potencia
 )
 
 # --- Seção Principal do Dashboard ---
@@ -373,235 +313,143 @@ dados_processados_treino, global_codificador_tipo, global_codificador_falha = pr
 st.header("📋 Visão Geral e Estrutura dos Dados")
 st.markdown("Uma primeira olhada nos dados brutos e suas características.")
 
-tab_raw_data, tab_data_info, tab_null_values = st.tabs(["Dados Brutos (Head)", "Informações Descritivas", "Valores Nulos"])
+tab_dados_brutos, tab_info_dados, tab_valores_nulos = st.tabs(["Dados Brutos (Head)", "Informações Descritivas", "Valores Nulos"]) # Renomeado
 
-with tab_raw_data:
+with tab_dados_brutos:
     st.subheader("Primeiras 5 linhas do conjunto de treino:")
-    st.dataframe(dados_treino_raw.head())
+    st.dataframe(dados_treino_bruto.head())
     
-    st.subheader("Colunas e Tipos de Dados:")
-    st.write(pd.DataFrame(dados_treino_raw.dtypes, columns=['Tipo de Dado']))
+    st.subheader("Colunas e Seus Tipos de Dados:") # Título ligeiramente alterado
+    st.dataframe(pd.DataFrame(dados_treino_bruto.dtypes, columns=['Tipo de Dado'])) # Usando dataframe para melhor visualização
 
-with tab_data_info:
+with tab_info_dados:
     st.subheader("Estatísticas Descritivas para Variáveis Numéricas:")
-    st.dataframe(dados_treino_raw.describe())
+    st.dataframe(dados_treino_bruto.describe())
     
     st.subheader("Contagem de Valores para Variáveis Categóricas:")
-    categorical_cols = dados_treino_raw.select_dtypes(include='object').columns
-    if not categorical_cols.empty:
-        for col in categorical_cols:
+    colunas_categoricas = dados_treino_bruto.select_dtypes(include='object').columns # Renomeado
+    if not colunas_categoricas.empty:
+        for col in colunas_categoricas:
             st.write(f"**{col}:**")
-            st.dataframe(dados_treino_raw[col].value_counts().reset_index().rename(columns={'index': col, col: 'Contagem'}))
+            st.dataframe(dados_treino_bruto[col].value_counts().reset_index().rename(columns={'index': col, col: 'Contagem'}))
     else:
-        st.info("Não há colunas categóricas no dataset original.")
+        st.info("Não foram encontradas colunas categóricas no dataset original.") # Mensagem ligeiramente alterada
 
-with tab_null_values:
-    st.subheader("Análise de Valores Nulos:")
-    null_counts = dados_treino_raw.isnull().sum()
-    null_percentage = (dados_treino_raw.isnull().sum() / len(dados_treino_raw)) * 100
-    null_df = pd.DataFrame({'Valores Nulos': null_counts, 'Percentual': null_percentage})
-    st.dataframe(null_df[null_df['Valores Nulos'] > 0].sort_values(by='Percentual', ascending=False))
-    if null_df['Valores Nulos'].sum() == 0:
-        st.info("🎉 Ótima notícia! Não há valores nulos no seu conjunto de dados de treino.")
+with tab_valores_nulos:
+    st.subheader("Análise Detalhada de Valores Nulos:") # Título ligeiramente alterado
+    contagem_nulos = dados_treino_bruto.isnull().sum() # Renomeado
+    percentual_nulos = (dados_treino_bruto.isnull().sum() / len(dados_treino_bruto)) * 100 # Renomeado
+    df_nulos = pd.DataFrame({'Total de Nulos': contagem_nulos, 'Percentual (%)': percentual_nulos}) # Renomeado
+    st.dataframe(df_nulos[df_nulos['Total de Nulos'] > 0].sort_values(by='Percentual (%)', ascending=False)) # Renomeado
+    if df_nulos['Total de Nulos'].sum() == 0: # Renomeado
+        st.info("🎉 Excelente! Nenhuma célula vazia (nulo) detectada no seu conjunto de dados de treino.") # Mensagem ligeiramente alterada
     else:
-        st.warning("⚠️ Foram encontrados valores nulos. Considere estratégias de tratamento de nulos.")
+        st.warning("⚠️ Foram identificados valores nulos. Recomenda-se considerar estratégias de imputação ou remoção.") # Mensagem ligeiramente alterada
 
 # 2. Análise Exploratória dos Dados (EDA)
 st.header("📊 Análise Exploratória dos Dados (EDA)")
 st.markdown("Visualizações para entender padrões, distribuições e relações nos dados.")
 
-eda_tab1, eda_tab2, eda_tab3, eda_tab4 = st.tabs(["Distribuições de Variáveis", "Matriz de Correlação", "Análise de Falhas", "Análise por Tipo de Máquina"])
+tab_distribuicoes_vars, tab_matriz_correlacao, tab_analise_falhas, tab_analise_tipo_maquina = st.tabs(["Distribuições de Variáveis", "Matriz de Correlação", "Análise de Falhas", "Análise por Tipo de Máquina"]) # Renomeado
 
-with eda_tab1:
+with tab_distribuicoes_vars:
     st.subheader("Distribuição das Variáveis Numéricas")
-    colunas_numericas_para_plot = [
+    colunas_numericas_para_visualizacao = [ # Renomeado
         'temperatura_ar', 'temperatura_processo', 'umidade_relativa',
         'velocidade_rotacional', 'torque', 'desgaste_da_ferramenta'
     ]
     # Adicionar características engenheiradas se forem usadas
-    if usar_diferenca_temperatura and 'diferenca_temperatura' in dados_processados_treino.columns:
-        colunas_numericas_para_plot.append('diferenca_temperatura')
-    if usar_potencia and 'potencia' in dados_processados_treino.columns:
-        colunas_numericas_para_plot.append('potencia')
+    if usar_diferenca_temperatura and 'diferenca_temperatura' in dados_treino_preparados.columns:
+        colunas_numericas_para_visualizacao.append('diferenca_temperatura')
+    if usar_potencia and 'potencia' in dados_treino_preparados.columns:
+        colunas_numericas_para_visualizacao.append('potencia')
 
-    colunas_numericas_existentes = [col for col in colunas_numericas_para_plot if col in dados_processados_treino.columns]
+    colunas_numericas_existentes_para_plot = [col for col in colunas_numericas_para_visualizacao if col in dados_treino_preparados.columns] # Renomeado
 
-    if colunas_numericas_existentes:
-        colunas_por_linha = 2
-        for i in range(0, len(colunas_numericas_existentes), colunas_por_linha):
-            cols_layout = st.columns(colunas_por_linha)
-            for j, coluna in enumerate(colunas_numericas_existentes[i:i+colunas_por_linha]):
-                with cols_layout[j]:
-                    fig = plotar_distribuicoes(dados_processados_treino, coluna, f"Distribuição de {coluna.replace('_', ' ').title()}")
-                    if fig:
-                        st.plotly_chart(fig, use_container_width=True)
+    if colunas_numericas_existentes_para_plot:
+        num_colunas_layout = 2 # Renomeado
+        for i in range(0, len(colunas_numericas_existentes_para_plot), num_colunas_layout):
+            cols_layout_atual = st.columns(num_colunas_layout) # Renomeado
+            for j, coluna_atual in enumerate(colunas_numericas_existentes_para_plot[i:i+num_colunas_layout]): # Renomeado
+                with cols_layout_atual[j]:
+                    figura_dist = plotar_histograma_distribuicoes(dados_treino_preparados, coluna_atual, f"Distribuição de {coluna_atual.replace('_', ' ').title()}") # Renomeado
+                    if figura_dist:
+                        st.plotly_chart(figura_dist, use_container_width=True)
     else:
-        st.warning("Nenhuma coluna numérica padrão ou engenheirada encontrada para plotar distribuições.")
+        st.warning("Não há colunas numéricas padrão ou características engenheiradas disponíveis para visualizar distribuições.") # Mensagem ligeiramente alterada
 
-with eda_tab2:
-    st.subheader("Matriz de Correlação")
-    fig_corr = plotar_matriz_correlacao(dados_processados_treino)
-    if fig_corr:
-        st.plotly_chart(fig_corr, use_container_width=True)
+with tab_matriz_correlacao:
+    st.subheader("Matriz de Correlação entre Variáveis") # Título ligeiramente alterado
+    figura_correlacao = plotar_mapa_correlacao(dados_treino_preparados) # Renomeado
+    if figura_correlacao:
+        st.plotly_chart(figura_correlacao, use_container_width=True)
     else:
-        st.info("Não há dados numéricos suficientes para calcular a matriz de correlação.")
+        st.info("Dados numéricos insuficientes para gerar a matriz de correlação.") # Mensagem ligeiramente alterada
 
-with eda_tab3:
-    st.subheader("Análise de Falhas")
+with tab_analise_falhas:
+    st.subheader("Análise da Ocorrência de Falhas") # Título ligeiramente alterado
     
-    if 'qualquer_falha' in dados_processados_treino.columns:
-        falhas_count = dados_processados_treino['qualquer_falha'].value_counts(normalize=True) * 100
-        fig_falha_geral = px.bar(
+    if 'qualquer_falha' in dados_treino_preparados.columns:
+        contagem_falhas = dados_treino_preparados['qualquer_falha'].value_counts(normalize=True) * 100 # Renomeado
+        figura_falha_geral = px.bar( # Renomeado
             x=['Sem Falha', 'Com Falha'],
-            y=falhas_count.values,
-            title="Percentual de Máquinas com e sem Falha",
-            labels={'x': 'Status da Máquina', 'y': 'Percentual (%)'},
-            color=falhas_count.index.astype(str),
+            y=contagem_falhas.values,
+            title="Proporção de Máquinas com e sem Falha Registrada", # Título ligeiramente alterado
+            labels={'x': 'Status Operacional', 'y': 'Percentual (%)'}, # Eixos ligeiramente alterados
+            color=contagem_falhas.index.astype(str),
             color_discrete_map={'0': 'lightgreen', '1': 'salmon'}
         )
-        st.plotly_chart(fig_falha_geral, use_container_width=True)
-        st.info(f"Observa-se um desbalanceamento de classes: {falhas_count[0]:.2f}% sem falha vs {falhas_count[1]:.2f}% com falha. O modelo está configurado para tentar mitigar isso.")
+        st.plotly_chart(figura_falha_geral, use_container_width=True)
+        st.info(f"Observamos um desbalanceamento de classes significativo: {contagem_falhas[0]:.2f}% sem falha versus {contagem_falhas[1]:.2f}% com falha. O modelo foi configurado para tentar mitigar esse impacto.") # Mensagem ligeiramente alterada
         
     colunas_falhas_especificas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
-    colunas_falhas_existentes = [col for col in colunas_falhas_especificas if col in dados_processados_treino.columns]
+    colunas_falhas_existentes_no_df = [col for col in colunas_falhas_especificas if col in dados_treino_preparados.columns] # Renomeado
 
-    if colunas_falhas_existentes:
-        st.subheader("Distribuição de Tipos de Falha Específicos")
-        contagem_tipos_falha = dados_processados_treino[colunas_falhas_existentes].sum()
-        if not contagem_tipos_falha.empty and contagem_tipos_falha.sum() > 0:
-            fig_pie_falhas = px.pie(
-                values=contagem_tipos_falha.values,
-                names=contagem_tipos_falha.index,
-                title="Distribuição dos Tipos de Falha Ocorrentes",
+    if colunas_falhas_existentes_no_df:
+        st.subheader("Distribuição dos Tipos de Falha Identificados") # Título ligeiramente alterado
+        contagem_tipos_falha_especifica = dados_treino_preparados[colunas_falhas_existentes_no_df].sum() # Renomeado
+        if not contagem_tipos_falha_especifica.empty and contagem_tipos_falha_especifica.sum() > 0:
+            figura_pizza_falhas = px.pie( # Renomeado
+                values=contagem_tipos_falha_especifica.values,
+                names=contagem_tipos_falha_especifica.index,
+                title="Distribuição Percentual dos Tipos de Falha Ocorrentes", # Título ligeiramente alterado
                 hole=0.3
             )
-            st.plotly_chart(fig_pie_falhas, use_container_width=True)
+            st.plotly_chart(figura_pizza_falhas, use_container_width=True)
         else:
-            st.info("Nenhuma falha específica registrada nos dados de treino.")
+            st.info("Nenhuma falha específica foi registrada nos dados de treinamento.") # Mensagem ligeiramente alterada
     
-    st.subheader("Relação entre Variáveis Numéricas e Ocorrência de Falha")
-    colunas_numericas_eda = [
+    st.subheader("Relação entre Variáveis Numéricas e a Ocorrência de Falha") # Título ligeiramente alterado
+    colunas_numericas_para_relacao = [ # Renomeado
         'temperatura_ar', 'temperatura_processo', 'umidade_relativa',
         'velocidade_rotacional', 'torque', 'desgaste_da_ferramenta',
         'diferenca_temperatura', 'potencia'
     ]
-    colunas_numericas_eda = [col for col in colunas_numericas_eda if col in dados_processados_treino.columns]
+    colunas_numericas_para_relacao = [col for col in colunas_numericas_para_relacao if col in dados_treino_preparados.columns]
 
-    if 'qualquer_falha' in dados_processados_treino.columns and colunas_numericas_eda:
-        selected_feature = st.selectbox("Selecione uma variável para comparar com a falha:", colunas_numericas_eda)
-        fig_box = px.box(
-            dados_processados_treino, 
+    if 'qualquer_falha' in dados_treino_preparados.columns and colunas_numericas_para_relacao:
+        caracteristica_selecionada_relacao = st.selectbox("Escolha uma variável para comparar com o status de falha:", colunas_numericas_para_relacao) # Renomeado e alterado
+        figura_boxplot_falha = px.box( # Renomeado
+            dados_treino_preparados, 
             x='qualquer_falha', 
-            y=selected_feature, 
-            title=f"Distribuição de {selected_feature.replace('_', ' ').title()} por Status de Falha",
+            y=caracteristica_selecionada_relacao, 
+            title=f"Distribuição de {caracteristica_selecionada_relacao.replace('_', ' ').title()} por Status de Falha",
             color='qualquer_falha',
-            labels={'qualquer_falha': 'Status da Máquina'},
+            labels={'qualquer_falha': 'Estado de Falha'}, # Eixo ligeiramente alterado
             color_discrete_map={0: 'lightgreen', 1: 'salmon'}
         )
-        st.plotly_chart(fig_box, use_container_width=True)
+        st.plotly_chart(figura_boxplot_falha, use_container_width=True)
     else:
-        st.info("Não foi possível gerar gráficos de relação entre variáveis e falhas.")
+        st.info("Não foi possível gerar gráficos de relação entre variáveis numéricas e falhas.") # Mensagem ligeiramente alterada
 
-with eda_tab4:
+with tab_analise_tipo_maquina:
     st.subheader("Análise por Tipo de Máquina")
-    if 'tipo' in dados_processados_treino.columns and 'qualquer_falha' in dados_processados_treino.columns:
-        contagem_tipos = dados_processados_treino['tipo'].value_counts()
-        fig_pie_tipos = px.pie(
-            values=contagem_tipos.values,
-            names=contagem_tipos.index,
-            title="Distribuição de Amostras por Tipo de Máquina",
+    if 'tipo' in dados_treino_preparados.columns and 'qualquer_falha' in dados_treino_preparados.columns:
+        contagem_tipos_maquina = dados_treino_preparados['tipo'].value_counts() # Renomeado
+        figura_pizza_tipos_maquina = px.pie( # Renomeado
+            values=contagem_tipos_maquina.values,
+            names=contagem_tipos_maquina.index,
+            title="Distribuição de Amostras por Categoria de Máquina", # Título ligeiramente alterado
             hole=0.3
         )
-        st.plotly_chart(fig_pie_tipos, use_container_width=True)
-        
-        falhas_por_tipo = dados_processados_treino.groupby('tipo')['qualquer_falha'].mean().reset_index()
-        falhas_por_tipo['Percentual de Falhas'] = falhas_por_tipo['qualquer_falha'] * 100
-        fig_bar_falhas_tipo = px.bar(
-            falhas_por_tipo, 
-            x='tipo', 
-            y='Percentual de Falhas', 
-            title="Percentual de Falhas por Tipo de Máquina",
-            labels={'tipo': 'Tipo de Máquina'},
-            color='Percentual de Falhas',
-            color_continuous_scale='Plasma'
-        )
-        st.plotly_chart(fig_bar_falhas_tipo, use_container_width=True)
-    else:
-        st.info("As colunas 'tipo' ou 'qualquer_falha' não foram encontradas para esta análise.")
-
-# 3. Modelagem Preditiva
-st.header("🤖 Modelagem Preditiva")
-st.markdown("Construção, treinamento e avaliação do modelo de machine learning.")
-
-# Selecionar características baseado nas opções e disponibilidade
-caracteristicas_base = ['temperatura_ar', 'temperatura_processo', 'umidade_relativa',
-                       'velocidade_rotacional', 'torque', 'desgaste_da_ferramenta']
-caracteristicas_selecionadas = [col for col in caracteristicas_base if col in dados_processados_treino.columns]
-
-if 'tipo_codificado' in dados_processados_treino.columns:
-    caracteristicas_selecionadas.insert(0, 'tipo_codificado') # Adiciona no início
-
-if usar_diferenca_temperatura and 'diferenca_temperatura' in dados_processados_treino.columns:
-    caracteristicas_selecionadas.append('diferenca_temperatura')
-if usar_potencia and 'potencia' in dados_processados_treino.columns:
-    caracteristicas_selecionadas.append('potencia')
-
-if not caracteristicas_selecionadas:
-    st.error("❌ Nenhuma característica adequada encontrada para modelagem. Verifique os dados e as configurações.")
-else:
-    st.info(f"Características selecionadas para o modelo: {', '.join(caracteristicas_selecionadas)}")
-    
-    alvo = None
-    modelo = None
-    rotulos_alvo = None
-    
-    if tipo_modelagem == "Binária (Qualquer Falha)":
-        if 'qualquer_falha' in dados_processados_treino.columns:
-            alvo = 'qualquer_falha'
-            modelo = RandomForestClassifier(n_estimators=100, random_state=estado_aleatorio, class_weight='balanced')
-            rotulos_alvo = ['Sem Falha', 'Com Falha']
-        else:
-            st.error("A coluna 'qualquer_falha' não está disponível para modelagem binária.")
-            
-    elif tipo_modelagem == "Multiclasse (Tipos de Falha Específicos)":
-        if 'tipo_falha_codificado' in dados_processados_treino.columns and global_codificador_falha:
-            alvo = 'tipo_falha_codificado'
-            modelo = RandomForestClassifier(n_estimators=100, random_state=estado_aleatorio, class_weight='balanced')
-            rotulos_alvo = global_codificador_falha.classes_
-        else:
-            st.error("As colunas de tipos de falha ou o codificador não estão disponíveis para modelagem multiclasse.")
-
-    if alvo and alvo in dados_processados_treino.columns and modelo:
-        X = dados_processados_treino[caracteristicas_selecionadas]
-        y = dados_processados_treino[alvo]
-        
-        if len(y.unique()) < 2:
-            st.error(f"Não há variação suficiente na variável alvo '{alvo}' para treinamento do modelo. Necessário pelo menos 2 classes distintas.")
-        else:
-            try:
-                # Divisão dos dados em treino e teste
-                X_treino, X_teste, y_treino, y_teste = train_test_split(
-                    X, y, test_size=tamanho_teste/100, random_state=estado_aleatorio, stratify=y
-                )
-                
-                # Treinar modelo
-                with st.spinner('Treinando modelo RandomForest...'):
-                    modelo.fit(X_treino, y_treino)
-                st.success("Modelo treinado com sucesso!")
-                
-                # Fazer previsões
-                y_previsto = modelo.predict(X_teste)
-                y_probabilidade = modelo.predict_proba(X_teste)
-                
-                st.subheader("Resultados do Modelo (Validação Interna)")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Acurácia", f"{accuracy_score(y_teste, y_previsto):.4f}")
-                with col2:
-                    st.metric("Amostras de Treino", X_treino.shape[0])
-                with col3:
-                    st.metric("Amostras de Teste", X_teste.shape[0])
-                
-                # Matriz de Confusão
-                if rotulos_alvo is not None:
-                    fig_cm = plotar_matriz_confusao(y_teste, y_previsto
+        st.plotly_chart(figura_pizza
