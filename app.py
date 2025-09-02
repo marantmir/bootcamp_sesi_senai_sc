@@ -14,6 +14,17 @@ import joblib
 import os
 import json
 import time
+import subprocess
+import pkg_resources
+
+# Verificar e instalar dependências se necessário
+required = {'scikit-learn==1.3.2', 'numpy==1.24.3', 'cython==0.29.36'}
+installed = {pkg.key for pkg in pkg_resources.working_set}
+missing = required - installed
+
+if missing:
+    python = sys.executable
+    subprocess.check_call([python, '-m', 'pip', 'install', *missing], stdout=subprocess.DEVNULL)
 
 # Configuração da página
 st.set_page_config(
@@ -525,3 +536,4 @@ st.markdown(
     Desenvolvido com Streamlit, Scikit-learn e Plotly
     """
 )
+
