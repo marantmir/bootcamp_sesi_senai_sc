@@ -1,5 +1,7 @@
 import streamlit as st
 import random
+import pandas as pd
+import requests
 
 # Configuração básica
 st.set_page_config(page_title="Previsão de Falhas", layout="wide")
@@ -163,3 +165,28 @@ streamlit run app.py
 st.markdown("---")
 st.caption("© 2025 - Projeto de Data Science | Desenvolvido para aprendizado")
 
+st.sidebar.header("🔌 API Submission")
+
+if st.sidebar.button("Enviar previsões para avaliação"):
+    with st.spinner("Enviando para a API..."):
+        try:
+            # Carrega suas previsões
+            df_test = pd.read_csv("data/Bootcamp_test_predictions.csv")
+            
+            # Prepara o payload
+            payload = {"predictions": df_test.to_dict(orient='records')}
+            
+            # Envia para a API (URL exemplo)
+            response = requests.post(
+                "https://api-bootcamp-cdia.herokuapp.com/evaluate",
+                json=payload
+            )
+            
+            if response.status_code == 200:
+                st.success("✅ Previsões enviadas com sucesso!")
+                st.json(response.json())
+            else:
+                st.error(f"❌ Erro: {response.text}")
+                
+        except Exception as e:
+            st.error(f"Erro: {str(e)}")
