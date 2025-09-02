@@ -1,3 +1,4 @@
+python-version=3.11
 streamlit==1.22.0
 pandas==1.5.3
 xgboost==1.7.5
