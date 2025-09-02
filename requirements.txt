@@ -2,7 +2,7 @@ xgboost==1.7.5
 fastapi==0.95.0
 uvicorn==0.21.1
 cython==0.29.36
-scipy==1.10.0
+scipy
 streamlit==1.36.0
 pandas
 numpy==1.26.4
@@ -11,4 +11,5 @@ plotly==5.22.0
 requests==2.32.3
 seaborn==0.13.2
 matplotlib
+
 
