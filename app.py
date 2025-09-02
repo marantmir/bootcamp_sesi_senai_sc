@@ -37,15 +37,23 @@ with st.sidebar:
     st.subheader("Status dos Arquivos")
     if arquivo_treino_existe:
         st.success("✅ bootcamp_train.csv encontrado")
-        dados_treino = pd.read_csv("bootcamp_train.csv")
-        st.write(f"📊 {len(dados_treino)} registros carregados")
+        # Apenas mostrar informação, não carregar dados aqui
+        try:
+            dados_preview = pd.read_csv("bootcamp_train.csv", nrows=5)
+            st.write(f"📊 Estrutura do arquivo: {len(dados_preview)} linhas preview")
+        except:
+            st.write("📊 Arquivo encontrado")
     else:
         st.error("❌ bootcamp_train.csv não encontrado")
         
     if arquivo_teste_existe:
         st.success("✅ bootcamp_test.csv encontrado")
-        dados_teste = pd.read_csv("bootcamp_test.csv")
-        st.write(f"📈 {len(dados_teste)} registros carregados")
+        # Apenas mostrar informação, não carregar dados aqui
+        try:
+            dados_preview = pd.read_csv("bootcamp_test.csv", nrows=5)
+            st.write(f"📈 Estrutura do arquivo: {len(dados_preview)} linhas preview")
+        except:
+            st.write("📈 Arquivo encontrado")
     else:
         st.warning("⚠️ bootcamp_test.csv não encontrado")
     
@@ -76,6 +84,7 @@ with st.sidebar:
     url_api = st.text_input("URL da API de avaliação:", "https://api-bootcamp-cdia.herokuapp.com/evaluate")
 
 # Funções auxiliares
+@st.cache_data
 def carregar_dados():
     """Carrega os dados dos arquivos CSV locais"""
     try:
@@ -106,12 +115,6 @@ def preprocessar_dados(df, eh_treino=True, usar_diff_temp=True, usar_pot=True):
         # Calcular se há qualquer tipo de falha
         colunas_falhas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
         df_processado['qualquer_falha'] = df_processado[colunas_falhas].max(axis=1)
-        
-        # Calcular estatísticas de falhas
-        estatisticas_falhas = {}
-        for coluna in colunas_falhas:
-            estatisticas_falhas[coluna] = df_processado[coluna].sum()
-        estatisticas_falhas['total_falhas'] = df_processado['qualquer_falha'].sum()
     
     return df_processado
 
@@ -253,7 +256,7 @@ if arquivo_treino_existe:
             
             # Relação entre variáveis e falhas
             st.subheader("Relação entre Variáveis e Falhas")
-            variavel_selecionada = st.selectbox("Selecione a variável:", colunas_numericas)
+            variavel_selecionada = st.selectbox("Selecione a variável:", colunas_numericas, key="var_select")
             
             figura = px.box(
                 dados_treino, 
@@ -429,7 +432,7 @@ if arquivo_treino_existe:
                     mime="text/csv"
                 )
                 
-                # Botão para enviar para a API
+                # Botão para enviar para la API
                 if st.button("Enviar Previsões para API de Avaliação"):
                     # Preparar dados no formato esperado pela API
                     dados_envio = resultados_df[['id']].copy()
@@ -478,7 +481,7 @@ st.markdown("---")
 st.markdown(
     """
     **Projeto Final do Bootcamp de Ciência de Dados e IA**  
-    *Sistema de Manutenção Preditiva para Máquinas Industriais*  
+    *Sistema de Manutenção Preditiva para Máquinas Industrials*  
     Desenvolvido com Streamlit, Scikit-learn e Plotly
     """
 )
