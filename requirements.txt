@@ -1,15 +1,16 @@
-xgboost==1.7.5
-fastapi==0.95.0
-uvicorn==0.21.1
-cython==0.29.36
+xgboost
+fastapi
+uvicorn
+cython
 scipy
-streamlit==1.36.0
+streamlit
 pandas
-numpy==1.26.4
-scikit-learn==1.5.0
-plotly==5.22.0
-requests==2.32.3
-seaborn==0.13.2
+numpy
+scikit-learn
+plotly
+requests
+seaborn
 matplotlib
+
 
 
