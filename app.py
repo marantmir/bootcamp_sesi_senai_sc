@@ -12,6 +12,8 @@ import plotly.graph_objects as go
 import requests
 import joblib
 import os
+import json
+import time
 
 # Configuração da página
 st.set_page_config(
@@ -37,23 +39,11 @@ with st.sidebar:
     st.subheader("Status dos Arquivos")
     if arquivo_treino_existe:
         st.success("✅ bootcamp_train.csv encontrado")
-        # Apenas mostrar informação, não carregar dados aqui
-        try:
-            dados_preview = pd.read_csv("bootcamp_train.csv", nrows=5)
-            st.write(f"📊 Estrutura do arquivo: {len(dados_preview)} linhas preview")
-        except:
-            st.write("📊 Arquivo encontrado")
     else:
         st.error("❌ bootcamp_train.csv não encontrado")
         
     if arquivo_teste_existe:
         st.success("✅ bootcamp_test.csv encontrado")
-        # Apenas mostrar informação, não carregar dados aqui
-        try:
-            dados_preview = pd.read_csv("bootcamp_test.csv", nrows=5)
-            st.write(f"📈 Estrutura do arquivo: {len(dados_preview)} linhas preview")
-        except:
-            st.write("📈 Arquivo encontrado")
     else:
         st.warning("⚠️ bootcamp_test.csv não encontrado")
     
@@ -68,7 +58,7 @@ with st.sidebar:
     st.subheader("Configurações do Modelo")
     tipo_modelagem = st.selectbox(
         "Tipo de Modelagem:",
-        ["Binária (Falha vs Não Falha)", "Multiclasse (Tipo de Falha)", "Multirrótulo"]
+        ["Binária (Falha vs Não Falha)", "Multiclasse (Tipo de Falha)"]
     )
     
     tamanho_teste = st.slider("Percentual para Teste:", 10, 40, 20)
@@ -178,6 +168,60 @@ def plotar_importancia_caracteristicas(importancia_caracteristicas):
     )
     figura.update_layout(yaxis={'categoryorder':'total ascending'})
     return figura
+
+def enviar_para_api(dados_envio, url_api):
+    """Envia dados para a API e retorna a resposta"""
+    try:
+        with st.spinner('Enviando previsões para a API...'):
+            resposta = requests.post(url_api, json=dados_envio)
+        
+        if resposta.status_code == 200:
+            return True, resposta.json()
+        else:
+            return False, f"Erro HTTP {resposta.status_code}: {resposta.text}"
+    except Exception as e:
+        return False, f"Erro de conexão: {str(e)}"
+
+def exibir_resultados_api(resultados):
+    """Exibe os resultados retornados pela API de forma organizada"""
+    if not isinstance(resultados, dict):
+        st.error("Formato de resposta da API inválido")
+        return
+    
+    st.subheader("📊 Resultados da Validação pela API")
+    
+    # Métricas gerais
+    if 'overall_accuracy' in resultados:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Acurácia Geral", f"{resultados['overall_accuracy']:.4f}")
+        with col2:
+            st.metric("Precision Média", f"{resultados.get('mean_precision', 0):.4f}")
+        with col3:
+            st.metric("Recall Médio", f"{resultados.get('mean_recall', 0):.4f}")
+    
+    # Matriz de confusão
+    if 'confusion_matrix' in resultados:
+        st.subheader("Matriz de Confusão (API)")
+        fig = px.imshow(
+            resultados['confusion_matrix'], 
+            text_auto=True,
+            aspect="auto",
+            title="Matriz de Confusão - Validação API",
+            color_continuous_scale='Blues'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    # Métricas por classe
+    if 'class_metrics' in resultados:
+        st.subheader("Métricas por Classe")
+        metricas_df = pd.DataFrame(resultados['class_metrics']).T
+        st.dataframe(metricas_df)
+    
+    # Curva ROC (se disponível)
+    if 'roc_auc' in resultados:
+        st.subheader("Curva ROC")
+        st.write(f"AUC Score: {resultados['roc_auc']:.4f}")
 
 # Carregar dados
 if arquivo_treino_existe:
@@ -305,7 +349,7 @@ if arquivo_treino_existe:
             alvo = 'qualquer_falha'
             modelo = RandomForestClassifier(n_estimators=100, random_state=estado_aleatorio, class_weight='balanced')
             tipo_problema = 'binario'
-        elif tipo_modelagem == "Multiclasse (Tipo de Falha)":
+        else:  # Multiclasse
             # Criar uma coluna com o tipo de falha predominante
             colunas_falhas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
             dados_processados['tipo_falha'] = dados_processados[colunas_falhas].idxmax(axis=1)
@@ -318,77 +362,66 @@ if arquivo_treino_existe:
             alvo = 'tipo_falha_codificado'
             modelo = RandomForestClassifier(n_estimators=100, random_state=estado_aleatorio, class_weight='balanced')
             tipo_problema = 'multiclasse'
-        else:  # Multirrótulo
-            alvo = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
-            st.info("Para problemas multirrótulo, treinaremos um modelo para cada tipo de falha.")
-            tipo_problema = 'multirrotulo'
-            modelos = {}
         
         # Dividir dados em treino e teste
-        if tipo_problema != 'multirrotulo':
-            X = dados_processados[caracteristicas]
-            y = dados_processados[alvo]
-            
-            X_treino, X_teste, y_treino, y_teste = train_test_split(
-                X, y, test_size=tamanho_teste/100, random_state=estado_aleatorio, stratify=y
-            )
-            
-            # Treinar modelo
-            with st.spinner('Treinando modelo...'):
-                modelo.fit(X_treino, y_treino)
-            
-            # Fazer previsões
-            y_previsto = modelo.predict(X_teste)
-            y_probabilidade = modelo.predict_proba(X_teste)
-            
-            # Avaliar modelo
-            acuracia = accuracy_score(y_teste, y_previsto)
-            
-            st.subheader("Resultados do Modelo")
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                st.metric("Acurácia do Modelo", f"{acuracia:.4f}")
-            
-            with col2:
-                st.metric("Amostras de Treino", X_treino.shape[0])
-            
-            with col3:
-                st.metric("Amostras de Teste", X_teste.shape[0])
-            
-            # Matriz de confusão
-            if tipo_problema == 'binario':
-                rotulos = ['Sem Falha', 'Com Falha']
-            else:
-                rotulos = list(codificador_falha.classes_)
-            
-            figura = plotar_matriz_confusao(y_teste, y_previsto, rotulos)
-            st.plotly_chart(figura, use_container_width=True)
-            
-            # Relatório de classificação
-            st.subheader("Relatório de Classificação")
-            relatorio = classification_report(y_teste, y_previsto, target_names=rotulos, output_dict=True)
-            relatorio_df = pd.DataFrame(relatorio).transpose()
-            st.dataframe(relatorio_df)
-            
-            # Importância das características
-            st.subheader("Importância das Características")
-            importancia_caracteristicas = pd.DataFrame({
-                'caracteristica': caracteristicas,
-                'importancia': modelo.feature_importances_
-            }).sort_values('importancia', ascending=False)
-            
-            figura = plotar_importancia_caracteristicas(importancia_caracteristicas)
-            st.plotly_chart(figura, use_container_width=True)
-            
-            # Mostrar características mais importantes
-            st.write("Características mais importantes:")
-            for i, linha in importancia_caracteristicas.head(5).iterrows():
-                st.write(f"{i+1}. {linha['caracteristica']}: {linha['importancia']:.4f}")
+        X = dados_processados[caracteristicas]
+        y = dados_processados[alvo]
+        
+        X_treino, X_teste, y_treino, y_teste = train_test_split(
+            X, y, test_size=tamanho_teste/100, random_state=estado_aleatorio, stratify=y
+        )
+        
+        # Treinar modelo
+        with st.spinner('Treinando modelo...'):
+            modelo.fit(X_treino, y_treino)
+        
+        # Fazer previsões
+        y_previsto = modelo.predict(X_teste)
+        y_probabilidade = modelo.predict_proba(X_teste)
+        
+        # Avaliar modelo
+        acuracia = accuracy_score(y_teste, y_previsto)
+        
+        st.subheader("Resultados do Modelo (Validação Interna)")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Acurácia do Modelo", f"{acuracia:.4f}")
+        
+        with col2:
+            st.metric("Amostras de Treino", X_treino.shape[0])
+        
+        with col3:
+            st.metric("Amostras de Teste", X_teste.shape[0])
+        
+        # Matriz de confusão
+        if tipo_problema == 'binario':
+            rotulos = ['Sem Falha', 'Com Falha']
+        else:
+            rotulos = list(codificador_falha.classes_)
+        
+        figura = plotar_matriz_confusao(y_teste, y_previsto, rotulos)
+        st.plotly_chart(figura, use_container_width=True)
+        
+        # Relatório de classificação
+        st.subheader("Relatório de Classificação")
+        relatorio = classification_report(y_teste, y_previsto, target_names=rotulos, output_dict=True)
+        relatorio_df = pd.DataFrame(relatorio).transpose()
+        st.dataframe(relatorio_df)
+        
+        # Importância das características
+        st.subheader("Importância das Características")
+        importancia_caracteristicas = pd.DataFrame({
+            'caracteristica': caracteristicas,
+            'importancia': modelo.feature_importances_
+        }).sort_values('importancia', ascending=False)
+        
+        figura = plotar_importancia_caracteristicas(importancia_caracteristicas)
+        st.plotly_chart(figura, use_container_width=True)
         
         # Processar dados de teste se disponíveis
         if arquivo_teste_existe and dados_teste is not None:
-            st.header("📤 Previsões para Dados de Teste")
+            st.header("📤 Previsões para Dados de Teste e Validação pela API")
             
             dados_teste_processados = preprocessar_dados(dados_teste, eh_treino=False, 
                                                        usar_diff_temp=usar_diferenca_temperatura, 
@@ -397,74 +430,81 @@ if arquivo_treino_existe:
             # Garantir que temos as mesmas características
             X_teste_novo = dados_teste_processados[caracteristicas]
             
-            if tipo_problema != 'multirrotulo':
-                # Fazer previsões
-                previsoes_teste = modelo.predict(X_teste_novo)
-                probabilidades_teste = modelo.predict_proba(X_teste_novo)
-                
-                # Preparar resultados
-                resultados_df = dados_teste.copy()
-                
-                if tipo_problema == 'binario':
-                    resultados_df['falha_prevista'] = previsoes_teste
-                    resultados_df['probabilidade_falha'] = probabilidades_teste[:, 1]
-                else:
-                    resultados_df['tipo_falha_previsto'] = codificador_falha.inverse_transform(previsoes_teste)
-                    # Adicionar probabilidades para cada classe
-                    for i, classe in enumerate(codificador_falha.classes_):
-                        resultados_df[f'probabilidade_{classe}'] = probabilidades_teste[:, i]
-                
-                # Exibir resultados
-                st.subheader("Previsões para os Dados de Teste")
-                st.dataframe(resultados_df.head(10))
-                
-                # Estatísticas das previsões
-                if tipo_problema == 'binario':
-                    falhas_previstas = resultados_df['falha_prevista'].sum()
-                    st.metric("Falhas Previstas", f"{falhas_previstas} ({falhas_previstas/len(resultados_df)*100:.1f}%)")
-                
-                # Botão para download dos resultados
-                csv = resultados_df.to_csv(index=False)
-                st.download_button(
-                    label="Download das Previsões (CSV)",
-                    data=csv,
-                    file_name="previsoes_teste.csv",
-                    mime="text/csv"
-                )
-                
-                # Botão para enviar para la API
-                if st.button("Enviar Previsões para API de Avaliação"):
-                    # Preparar dados no formato esperado pela API
-                    dados_envio = resultados_df[['id']].copy()
-                    
-                    if tipo_problema == 'binario':
-                        dados_envio['falha_maquina'] = resultados_df['falha_prevista']
-                        # Para a API, precisamos preencher as colunas de falha específicas
-                        for coluna in ['FDF', 'FDC', 'FP', 'FTE', 'FA']:
-                            dados_envio[coluna] = 0
-                    else:
-                        dados_envio['falha_maquina'] = (resultados_df['tipo_falha_previsto'] != 'NF').astype(int)
-                        # Preencher as colunas de falha específicas
-                        for coluna in ['FDF', 'FDC', 'FP', 'FTE', 'FA']:
-                            dados_envio[coluna] = (resultados_df['tipo_falha_previsto'] == coluna).astype(int)
-                    
-                    # Converter para formato JSON
-                    dados_json = dados_envio.to_dict(orient='records')
-                    
-                    # Enviar para a API
-                    try:
-                        with st.spinner('Enviando previsões para a API...'):
-                            resposta = requests.post(url_api, json=dados_json)
-                        if resposta.status_code == 200:
-                            st.success("✅ Previsões enviadas com sucesso para a API!")
-                            st.json(resposta.json())
-                        else:
-                            st.error(f"❌ Erro ao enviar previsões: {resposta.text}")
-                    except Exception as e:
-                        st.error(f"❌ Erro de conexão: {str(e)}")
+            # Fazer previsões
+            previsoes_teste = modelo.predict(X_teste_novo)
+            probabilidades_teste = modelo.predict_proba(X_teste_novo)
             
+            # Preparar resultados
+            resultados_df = dados_teste.copy()
+            
+            if tipo_problema == 'binario':
+                resultados_df['falha_prevista'] = previsoes_teste
+                resultados_df['probabilidade_falha'] = probabilidades_teste[:, 1]
             else:
-                st.info("Para problemas multirrótulo, é necessário implementar a lógica específica.")
+                resultados_df['tipo_falha_previsto'] = codificador_falha.inverse_transform(previsoes_teste)
+                # Adicionar probabilidades para cada classe
+                for i, classe in enumerate(codificador_falha.classes_):
+                    resultados_df[f'probabilidade_{classe}'] = probabilidades_teste[:, i]
+            
+            # Exibir resultados
+            st.subheader("Previsões para os Dados de Teste")
+            st.dataframe(resultados_df.head(10))
+            
+            # Estatísticas das previsões
+            if tipo_problema == 'binario':
+                falhas_previstas = resultados_df['falha_prevista'].sum()
+                st.metric("Falhas Previstas", f"{falhas_previstas} ({falhas_previstas/len(resultados_df)*100:.1f}%)")
+            
+            # Botão para download dos resultados
+            csv = resultados_df.to_csv(index=False)
+            st.download_button(
+                label="Download das Previsões (CSV)",
+                data=csv,
+                file_name="previsoes_teste.csv",
+                mime="text/csv"
+            )
+            
+            # Preparar dados para envio à API
+            st.subheader("Validação pela API")
+            
+            # Formatar dados para a API
+            dados_para_api = []
+            for _, row in resultados_df.iterrows():
+                registro = {
+                    'id': row['id'],
+                    'falha_maquina': int(row['falha_prevista']) if tipo_problema == 'binario' else int(row['tipo_falha_previsto'] != 'NF')
+                }
+                
+                # Adicionar falhas específicas
+                if tipo_problema == 'binario':
+                    for falha in ['FDF', 'FDC', 'FP', 'FTE', 'FA']:
+                        registro[falha] = 0  # Para modelo binário, não sabemos o tipo específico
+                else:
+                    for falha in ['FDF', 'FDC', 'FP', 'FTE', 'FA']:
+                        registro[falha] = int(row['tipo_falha_previsto'] == falha)
+                
+                dados_para_api.append(registro)
+            
+            # Botão para enviar para a API
+            if st.button("🚀 Validar Modelo na API", type="primary"):
+                sucesso, resultado = enviar_para_api(dados_para_api, url_api)
+                
+                if sucesso:
+                    st.success("✅ Validação realizada com sucesso!")
+                    exibir_resultados_api(resultado)
+                    
+                    # Salvar resultados da validação
+                    with open('resultado_validacao_api.json', 'w') as f:
+                        json.dump(resultado, f, indent=4)
+                    
+                    st.download_button(
+                        label="📥 Download Resultados Validação",
+                        data=json.dumps(resultado, indent=4),
+                        file_name="resultado_validacao_api.json",
+                        mime="application/json"
+                    )
+                else:
+                    st.error(f"❌ Erro na validação: {resultado}")
         
         # Salvar modelo treinado
         if st.button("💾 Salvar Modelo Treinado"):
@@ -481,7 +521,7 @@ st.markdown("---")
 st.markdown(
     """
     **Projeto Final do Bootcamp de Ciência de Dados e IA**  
-    *Sistema de Manutenção Preditiva para Máquinas Industrials*  
+    *Sistema de Manutenção Preditiva para Máquinas Industriais*  
     Desenvolvido com Streamlit, Scikit-learn e Plotly
     """
 )
