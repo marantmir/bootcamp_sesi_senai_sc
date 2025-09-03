@@ -151,8 +151,9 @@ excluir = {'id','id_produto','tipo','qualquer_falha','tipo_falha_nome','tipo_fal
            'FDF','FDC','FP','FTE','FA','falha_maquina'}
 variaveis = [c for c in dados_treino_prep.columns if c not in excluir]
 
-X = dados_treino_prep[variaveis]
-y = dados_treino_prep[alvo]
+# seleciona apenas variáveis numéricas
+X = dados_treino_prep[variaveis].select_dtypes(include=[np.number]).fillna(0)
+y = dados_treino_prep[alvo].astype(int)
 
 # Verifica número de classes para stratify
 strat = y if y.nunique() > 1 else None
@@ -213,4 +214,5 @@ else:
 
 st.markdown("---")
 st.caption("Feito para o projeto do Bootcamp — organize e comente o código antes de subir ao GitHub.")
+
 
