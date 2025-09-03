@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
-def carregar_dados(caminho_arquivo="data.csv"):
+def carregar_dados(caminho_arquivo="bootcamp_train.csv"):
     """Carrega os dados de um arquivo CSV."""
     if os.path.exists(caminho_arquivo):
         df = pd.read_csv(caminho_arquivo)
