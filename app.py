@@ -17,7 +17,7 @@ from utils import (
     plotar_correlacao,
     plotar_matriz_confusao,
     plotar_importancia_variaveis,
-    montar_payload_api,
+    montar_payload_api
 )
 
 # -----------------------------------------------------
@@ -331,3 +331,4 @@ def montar_payload_api(df_teste, df_predicoes, tipo_modelagem):
                 'label': int(r.get('pred_tipo_falha_cod',0))
             })
     return payload
+
