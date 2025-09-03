@@ -98,28 +98,94 @@ if dados_teste_prep is not None:
 
     df_submit = submission_csv(df_multi)
 
-    st.subheader("Prévia do CSV para API")
-    st.dataframe(df_submit.head())
+    # Validação rigorosa do formato antes do envio
+    colunas_esperadas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
+    if not all(col in df_submit.columns for col in colunas_esperadas):
+        st.error("CSV deve conter exatamente as colunas: FDF, FDC, FP, FTE, FA")
+    else:
+        # Garantir que apenas as colunas necessárias estejam presentes
+        df_submit = df_submit[colunas_esperadas].copy()
+        
+        # Forçar conversão para inteiros 0 ou 1
+        for col in colunas_esperadas:
+            df_submit[col] = df_submit[col].astype(int)
+            # Garantir que são apenas 0 ou 1
+            df_submit[col] = df_submit[col].clip(0, 1)
+        
+        # Verificar se o número de linhas corresponde ao arquivo de teste original
+        if dados_teste is not None and len(df_submit) != len(dados_teste):
+            st.error(f"Número de linhas incorreto. Esperado: {len(dados_teste)}, Atual: {len(df_submit)}")
+        else:
+            st.subheader("Prévia do CSV para API")
+            st.dataframe(df_submit.head())
+            
+            # Mostrar estatísticas de validação
+            st.write("**Validação do formato:**")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Linhas", len(df_submit))
+            with col2:
+                st.metric("Colunas", len(df_submit.columns))
+            with col3:
+                valores_unicos = set()
+                for col in colunas_esperadas:
+                    valores_unicos.update(df_submit[col].unique())
+                st.metric("Valores únicos", f"{sorted(valores_unicos)}")
 
-    if st.button("📡 Enviar predições para API"):
-        try:
-            csv_buffer = io.StringIO()
-            df_submit.to_csv(csv_buffer, index=False)
-            csv_buffer.seek(0)
+            if st.button("📡 Enviar predições para API"):
+                try:
+                    # Criar CSV com formatação específica
+                    csv_buffer = io.StringIO()
+                    df_submit.to_csv(csv_buffer, index=False, lineterminator='\n')
+                    csv_content = csv_buffer.getvalue()
+                    
+                    # Log do conteúdo para debug
+                    with st.expander("Debug - Primeiras linhas do CSV"):
+                        st.text(csv_content[:500] + "..." if len(csv_content) > 500 else csv_content)
 
-            headers = {"X-API-Key": TOKEN_API}
-            params = {"threshold": float(threshold_api)}
-            files = {"file": ("submission.csv", csv_buffer.getvalue())}
+                    headers = {"X-API-Key": TOKEN_API}
+                    params = {"threshold": float(threshold_api)}
+                    files = {"file": ("submission.csv", csv_content, "text/csv")}
 
-            resp = requests.post(URL_API, headers=headers, files=files, params=params, timeout=60)
-            st.write("Status:", resp.status_code)
-            if resp.headers.get("content-type", "").startswith("application/json"):
-                st.json(resp.json())
-            else:
-                st.write(resp.text)
-            if resp.status_code != 200:
-                st.error("A API retornou erro. Verifique se o CSV contém apenas FDF,FDC,FP,FTE,FA com 0/1 e o mesmo nº de linhas do Bootcamp_test.csv.")
+                    with st.spinner("Enviando para API..."):
+                        resp = requests.post(URL_API, headers=headers, files=files, params=params, timeout=120)
+                    
+                    st.write("**Status da resposta:**", resp.status_code)
+                    
+                    if resp.status_code == 200:
+                        st.success("✅ Predições enviadas com sucesso!")
+                        if resp.headers.get("content-type", "").startswith("application/json"):
+                            resultado = resp.json()
+                            st.json(resultado)
+                            
+                            # Mostrar métricas de forma mais organizada se disponível
+                            if isinstance(resultado, dict):
+                                st.subheader("📊 Métricas de Performance")
+                                for metrica, valor in resultado.items():
+                                    if isinstance(valor, (int, float)):
+                                        st.metric(metrica.replace('_', ' ').title(), f"{valor:.4f}")
+                        else:
+                            st.write("Resposta da API:", resp.text)
+                    else:
+                        st.error(f"❌ Erro na API (Status {resp.status_code})")
+                        try:
+                            if resp.headers.get("content-type", "").startswith("application/json"):
+                                erro_detalhes = resp.json()
+                                st.json(erro_detalhes)
+                            else:
+                                st.write("Detalhes do erro:", resp.text)
+                        except:
+                            st.write("Não foi possível decodificar a resposta de erro")
+                        
+                        st.info("💡 Dicas para resolver:")
+                        st.write("- Verifique se o arquivo de teste tem o mesmo número de linhas")
+                        st.write("- Confirme que todas as predições são 0 ou 1")
+                        st.write("- Verifique se há valores NaN ou missing")
 
-        except Exception as e:
-            st.error(f"Erro ao enviar para a API: {e}")
-
+                except requests.exceptions.Timeout:
+                    st.error("⏰ Timeout na conexão com a API. Tente novamente.")
+                except requests.exceptions.ConnectionError:
+                    st.error("🔌 Erro de conexão com a API. Verifique sua internet.")
+                except Exception as e:
+                    st.error(f"❌ Erro inesperado: {str(e)}")
+                    st.write("Tipo do erro:", type(e).__name__)
