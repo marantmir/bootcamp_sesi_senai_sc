@@ -3,10 +3,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from utils import (
-    carregar_dados, preparar_dados, plotar_histograma, plotar_correlacao,
-    plotar_matriz_confusao, plotar_importancia_variaveis,
-    garantir_numerico, one_hot_falhas_from_multiclasse,
-    one_hot_falhas_from_binario, submission_csv, FALHAS
+    carregar_dados,
+    preparar_dados,
+    plotar_histograma,
+    plotar_correlacao,
+    plotar_matriz_confusao,
+    plotar_importancia_variaveis,
+    garantir_numerico,
+    one_hot_falhas_from_multiclasse,
+    one_hot_falhas_from_binario,
+    submission_csv,
+    FALHAS
 )
 
 # ---------------- Página / Sidebar ----------------
@@ -115,3 +122,4 @@ if dados_teste_prep is not None:
 
         except Exception as e:
             st.error(f"Erro ao enviar para a API: {e}")
+
