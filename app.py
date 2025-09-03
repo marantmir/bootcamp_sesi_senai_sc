@@ -202,41 +202,41 @@ if dados_teste_prep is not None:
 
     st.dataframe(df_predicoes.head())
 
-    import io
+   import io
+import requests
 
-if url_api and st.button("📡 Enviar predições para API"):
+if dados_teste_prep is not None and st.button("📡 Enviar predições para API"):
     try:
-        # 1. Gera CSV em memória com as predições no formato esperado
-        colunas = ['FDF','FDC','FP','FTE','FA']  # ajustar conforme o exemplo fornecido
+        # --- 1. Gera CSV no formato esperado pela API ---
+        # O bootcamp espera colunas: FDF, FDC, FP, FTE, FA (0/1 para cada falha)
+        colunas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
         df_submission = pd.DataFrame(0, index=df_predicoes.index, columns=colunas)
-        
-        # Exemplo simples: aqui estou assumindo que "pred" indica falha/sem falha (binário)
-        # Se for multiclasse, você deve mapear corretamente para cada coluna de falha
-        if 'pred' in df_predicoes.columns:
-            df_submission.loc[df_predicoes['pred'] == 1, 'FDF'] = 1  # só como exemplo
 
-        # salva em memória
+        # Exemplo simples: se o modelo prever "qualquer_falha", vamos marcar FDF=1
+        # (Ajuste aqui para mapear corretamente para multiclasse, se tiver!)
+        if 'pred' in df_predicoes.columns:
+            df_submission.loc[df_predicoes['pred'] == 1, 'FDF'] = 1
+
+        # Salva CSV em memória
         csv_buffer = io.StringIO()
         df_submission.to_csv(csv_buffer, index=False)
         csv_buffer.seek(0)
 
-        # 2. Headers com token do usuário (defina no sidebar ou em st.secrets)
-        token = st.text_input("🔑 Token da API", type="password")
-        headers = {"X-API-Key": token}
+        # --- 2. Autenticação via token ---
+        headers = {
+            "X-API-Key": "b611eddf6f51841fb1849dde92b2013f5bc33ca3e4a5ceb645326c22a8e3e4f7"
+        }
 
-        # 3. Parâmetros
+        # --- 3. Parâmetros (threshold pode ser ajustado no sidebar) ---
         params = {"threshold": 0.5}
 
-        # 4. Envio para a API
+        # --- 4. Envio ---
         files = {"file": ("submission.csv", csv_buffer.getvalue())}
-        resp = requests.post(
-            "http://34.193.187.218:5000/evaluate/multilabel_metrics",
-            headers=headers,
-            files=files,
-            params=params,
-            timeout=60
-        )
+        url_api = "http://34.193.187.218:5000/evaluate/multilabel_metrics"
 
+        resp = requests.post(url_api, headers=headers, files=files, params=params, timeout=60)
+
+        # --- 5. Resultado ---
         st.write("Status:", resp.status_code)
         if resp.status_code == 200:
             st.json(resp.json())
@@ -245,12 +245,12 @@ if url_api and st.button("📡 Enviar predições para API"):
 
     except Exception as e:
         st.error(f"Erro ao enviar para a API: {e}")
-
 else:
     st.info("Nenhum arquivo de teste fornecido (bootcamp_test.csv).")
 
 st.markdown("---")
 st.caption("Feito para o projeto do Bootcamp Ciência de Dados e IA, SESI/SENAI SC")
+
 
 
 
