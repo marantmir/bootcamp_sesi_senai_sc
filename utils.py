@@ -3,6 +3,15 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 
+def carregar_dados(caminho_arquivo="data.csv"):
+    """Carrega os dados de um arquivo CSV."""
+    if os.path.exists(caminho_arquivo):
+        df = pd.read_csv(caminho_arquivo)
+        return df
+    else:
+        print(f"Erro: O arquivo {caminho_arquivo} não foi encontrado.")
+        return None
+
 def plotar_importancia_variaveis(modelo, variaveis):
     """Tenta extrair importâncias de atributos do modelo e retornar gráfico.`"""
     try:
