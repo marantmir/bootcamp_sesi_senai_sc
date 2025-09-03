@@ -192,8 +192,15 @@ with col2:
     st.metric("Features", dados_treino.shape[1])
 with col3:
     if 'falha_maquina' in dados_treino.columns:
-        taxa_falha = dados_treino['falha_maquina'].mean()
+        # Converter a coluna para numérico
+        dados_treino['falha_maquina'] = pd.to_numeric(
+            dados_treino['falha_maquina'], errors='coerce'
+        )
+
+        # Calcular a taxa de falha (considerando apenas valores válidos)
+        taxa_falha = dados_treino['falha_maquina'].mean(skipna=True)
         st.metric("Taxa de Falha", f"{taxa_falha:.1%}")
+
 with col4:
     tipos_maquina = dados_treino['tipo'].nunique() if 'tipo' in dados_treino.columns else 0
     st.metric("Tipos de Máquina", tipos_maquina)
@@ -542,3 +549,4 @@ else:
 # ---------------- Rodapé ----------------
 st.markdown("---")
 st.markdown("**Desenvolvido para o Bootcamp de Ciência de Dados e IA** 🚀")
+
