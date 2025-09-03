@@ -179,8 +179,12 @@ st.plotly_chart(plotar_importancia_variaveis(modelo, variaveis), use_container_w
 # Prever / Submeter testes
 # ---------------------------
 if dados_teste_prep is not None:
-    st.header("📤 Predições no conjunto de teste (Bootcamp_test.csv)")
-    X_test = dados_teste_prep[variaveis].fillna(0)
+    st.header("📤 Predições no conjunto de teste (bootcamp_test.csv)")
+    
+    # Alinha colunas: só pega as que existem em ambos
+    colunas_comuns = [c for c in variaveis if c in dados_teste_prep.columns]
+    X_test = dados_teste_prep[colunas_comuns].select_dtypes(include=[np.number]).fillna(0)
+    
     preds_test = modelo.predict(X_test)
     proba_test = None
     if hasattr(modelo, "predict_proba") and modelo.n_classes_ <= 2:
@@ -194,6 +198,7 @@ if dados_teste_prep is not None:
     })
     if proba_test is not None:
         df_predicoes['proba'] = proba_test
+
 
     st.dataframe(df_predicoes.head())
 
@@ -210,9 +215,10 @@ if dados_teste_prep is not None:
             except Exception as e:
                 st.error(f"Erro ao enviar para a API: {e}")
 else:
-    st.info("Nenhum arquivo de teste fornecido (Bootcamp_test.csv).")
+    st.info("Nenhum arquivo de teste fornecido (bootcamp_test.csv).")
 
 st.markdown("---")
-st.caption("Feito para o projeto do Bootcamp — organize e comente o código antes de subir ao GitHub.")
+st.caption("Feito para o projeto do Bootcamp Ciência de Dados e IA, SESI/SENAI SC")
+
 
 
