@@ -186,10 +186,27 @@ if dados_teste_prep is not None:
                             st.write("Não foi possível decodificar a resposta de erro")
                             st.write("Headers da resposta:", dict(resp.headers))
                         
-                        st.info("💡 Tentativas de correção:")
-                        st.write("- Verificando se o token da API está correto")
-                        st.write("- Conferindo se o arquivo tem exatamente as 5 colunas esperadas")
-                        st.write("- Validando se não há caracteres especiais nos dados")
+                        st.info("💡 Passos para resolver:")
+                        st.write("1. **Registre-se primeiro:** Preencha email e senha para obter um token válido")
+                        st.write("2. **Verifique o token:** Se já tem um token, cole-o no campo apropriado")
+                        st.write("3. **Formato do arquivo:** Certifique-se que o CSV tem apenas as 5 colunas: FDF, FDC, FP, FTE, FA")
+                        st.write("4. **Valores binários:** Todos os valores devem ser 0 ou 1")
+                        
+                        # Botão para testar a API de registro
+                        if st.button("🧪 Testar registro na API"):
+                            if email_api and senha_api:
+                                try:
+                                    test_resp = requests.post(
+                                        URL_REGISTER,
+                                        json={"email": email_api, "password": senha_api},
+                                        timeout=10
+                                    )
+                                    st.write(f"Status do teste: {test_resp.status_code}")
+                                    st.json(test_resp.json())
+                                except Exception as e:
+                                    st.error(f"Erro no teste: {e}")
+                            else:
+                                st.warning("Preencha email e senha para testar")
 
                 except requests.exceptions.Timeout:
                     st.error("⏰ Timeout na conexão com a API. Tente novamente.")
