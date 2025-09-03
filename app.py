@@ -331,4 +331,3 @@ def montar_payload_api(df_teste, df_predicoes, tipo_modelagem):
                 'label': int(r.get('pred_tipo_falha_cod',0))
             })
     return payload
-
