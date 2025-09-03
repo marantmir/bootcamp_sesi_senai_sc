@@ -198,13 +198,9 @@ with st.expander("Relatório de Classificação"):
 
 st.plotly_chart(plotar_matriz_confusao(y_valid, previsoes), use_container_width=True)
 st.plotly_chart(plotar_importancia_variaveis(modelo, variaveis), use_container_width=True)
-```
-
----
 
 ## utils.py
 
-```python
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -335,3 +331,4 @@ def montar_payload_api(df_teste, df_predicoes, tipo_modelagem):
                 'label': int(r.get('pred_tipo_falha_cod',0))
             })
     return payload
+
