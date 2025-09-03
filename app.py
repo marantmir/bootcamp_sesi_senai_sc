@@ -35,8 +35,8 @@ st.markdown("---")
 with st.sidebar:
     st.header("⚙️ Configurações")
     st.subheader("📁 Fonte dos Dados")
-    arquivo_treino = st.file_uploader("Selecione o Bootcamp_train.csv", type=["csv"], key="up_train")
-    arquivo_teste = st.file_uploader("Selecione o Bootcamp_test.csv (opcional)", type=["csv"], key="up_test")
+    arquivo_treino = st.file_uploader("Selecione o bootcamp_train.csv", type=["csv"], key="up_train")
+    arquivo_teste = st.file_uploader("Selecione o bootcamp_test.csv (opcional)", type=["csv"], key="up_test")
 
     st.markdown("---")
     st.subheader("🤖 Modelagem")
@@ -71,7 +71,7 @@ for tipo_msg, texto_msg in mensagens:
         st.info(texto_msg)
 
 if dados_treino is None:
-    st.error("Treino indisponível. Carregue o Bootcamp_train.csv para continuar.")
+    st.error("Treino indisponível. Carregue o bootcamp_train.csv para continuar.")
     st.stop()
 
 # ---------------------------
@@ -213,3 +213,4 @@ else:
 
 st.markdown("---")
 st.caption("Feito para o projeto do Bootcamp — organize e comente o código antes de subir ao GitHub.")
+
