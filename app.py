@@ -183,7 +183,7 @@ import requests
 if dados_teste_prep is not None:
     st.header("📤 Predições no conjunto de teste (Bootcamp_test.csv)")
 
-    # Alinha colunas do teste com treino
+    # --- Predições ---
     colunas_comuns = [c for c in variaveis if c in dados_teste_prep.columns]
     X_test = dados_teste_prep[colunas_comuns].select_dtypes(include=[np.number]).fillna(0)
 
@@ -191,10 +191,7 @@ if dados_teste_prep is not None:
     proba_test = None
     if hasattr(modelo, "predict_proba") and modelo.n_classes_ <= 2:
         proba_test = modelo.predict_proba(X_test)[:, 1]
-    elif hasattr(modelo, "predict_proba"):
-        proba_test = np.max(modelo.predict_proba(X_test), axis=1)
 
-    # 🔑 Aqui definimos df_predicoes (sempre disponível depois desta célula)
     df_predicoes = pd.DataFrame({
         'id': dados_teste_prep.get('id', np.arange(len(preds_test))),
         'pred': preds_test
@@ -209,25 +206,31 @@ if dados_teste_prep is not None:
         try:
             import io
 
-            # Gera CSV no formato esperado (ajustar conforme bootcamp_submission_example.csv)
-            colunas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
-            df_submission = pd.DataFrame(0, index=df_predicoes.index, columns=colunas)
-            df_submission.loc[df_predicoes['pred'] == 1, 'FDF'] = 1  # exemplo simples
+            # 1. Monta DataFrame no formato EXATO do bootcamp_submission_example.csv
+            # Aqui, estou simulando que toda falha "pred=1" vira FDF=1
+            # -> Ajuste se você já tiver modelo multiclasse por falha
+            df_submission = pd.DataFrame({
+                'id': df_predicoes['id'].astype(int),
+                'FDF': (df_predicoes['pred'] == 1).astype(int),
+                'FDC': 0,
+                'FP': 0,
+                'FTE': 0,
+                'FA': 0
+            })
 
-            # Salva CSV em memória
+            # 2. Exporta para CSV em memória
             csv_buffer = io.StringIO()
             df_submission.to_csv(csv_buffer, index=False)
             csv_buffer.seek(0)
 
-            # Token fixo
+            # 3. Configura headers e envio
             headers = {
                 "X-API-Key": "b611eddf6f51841fb1849dde92b2013f5bc33ca3e4a5ceb645326c22a8e3e4f7"
             }
             params = {"threshold": 0.5}
-
-            url_api = "http://34.193.187.218:5000/evaluate/multilabel_metrics"
             files = {"file": ("submission.csv", csv_buffer.getvalue())}
 
+            url_api = "http://34.193.187.218:5000/evaluate/multilabel_metrics"
             resp = requests.post(url_api, headers=headers, files=files, params=params, timeout=60)
 
             st.write("Status:", resp.status_code)
@@ -244,4 +247,3 @@ else:
 
 st.markdown("---")
 st.caption("Feito para o projeto do Bootcamp Ciência de Dados e IA, SESI/SENAI SC")
-
