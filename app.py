@@ -168,19 +168,28 @@ if dados_teste_prep is not None:
                             st.write("Resposta da API:", resp.text)
                     else:
                         st.error(f"❌ Erro na API (Status {resp.status_code})")
+                        
+                        # Tentar diferentes estratégias de debugging
+                        st.write("**Debugging da requisição:**")
+                        st.write(f"- URL: {URL_API}")
+                        st.write(f"- Threshold: {threshold_api}")
+                        st.write(f"- Tamanho do arquivo: {len(csv_buffer.getvalue())} bytes")
+                        st.write(f"- Shape do DataFrame: {df_clean.shape}")
+                        
                         try:
                             if resp.headers.get("content-type", "").startswith("application/json"):
                                 erro_detalhes = resp.json()
                                 st.json(erro_detalhes)
                             else:
-                                st.write("Detalhes do erro:", resp.text)
+                                st.write("Resposta da API:", resp.text)
                         except:
                             st.write("Não foi possível decodificar a resposta de erro")
+                            st.write("Headers da resposta:", dict(resp.headers))
                         
-                        st.info("💡 Dicas para resolver:")
-                        st.write("- Verifique se o arquivo de teste tem o mesmo número de linhas")
-                        st.write("- Confirme que todas as predições são 0 ou 1")
-                        st.write("- Verifique se há valores NaN ou missing")
+                        st.info("💡 Tentativas de correção:")
+                        st.write("- Verificando se o token da API está correto")
+                        st.write("- Conferindo se o arquivo tem exatamente as 5 colunas esperadas")
+                        st.write("- Validando se não há caracteres especiais nos dados")
 
                 except requests.exceptions.Timeout:
                     st.error("⏰ Timeout na conexão com a API. Tente novamente.")
