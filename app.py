@@ -180,48 +180,68 @@ st.plotly_chart(plotar_importancia_variaveis(modelo, variaveis), use_container_w
 import io
 import requests
 
-if dados_teste_prep is not None and st.button("📡 Enviar predições para API"):
-  try:
-      # --- 1. Gera CSV no formato esperado pela API ---
-      # O bootcamp espera colunas: FDF, FDC, FP, FTE, FA (0/1 para cada falha)
-      colunas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
-      df_submission = pd.DataFrame(0, index=df_predicoes.index, columns=colunas)
+if dados_teste_prep is not None:
+    st.header("📤 Predições no conjunto de teste (Bootcamp_test.csv)")
 
-      # Exemplo simples: se o modelo prever "qualquer_falha", vamos marcar FDF=1
-      # (Ajuste aqui para mapear corretamente para multiclasse, se tiver!)
-      if 'pred' in df_predicoes.columns:
-        df_submission.loc[df_predicoes['pred'] == 1, 'FDF'] = 1
+    # Alinha colunas do teste com treino
+    colunas_comuns = [c for c in variaveis if c in dados_teste_prep.columns]
+    X_test = dados_teste_prep[colunas_comuns].select_dtypes(include=[np.number]).fillna(0)
 
-        # Salva CSV em memória
-        csv_buffer = io.StringIO()
-        df_submission.to_csv(csv_buffer, index=False)
-        csv_buffer.seek(0)
+    preds_test = modelo.predict(X_test)
+    proba_test = None
+    if hasattr(modelo, "predict_proba") and modelo.n_classes_ <= 2:
+        proba_test = modelo.predict_proba(X_test)[:, 1]
+    elif hasattr(modelo, "predict_proba"):
+        proba_test = np.max(modelo.predict_proba(X_test), axis=1)
 
-      # --- 2. Autenticação via token ---
-        headers = {
-            "X-API-Key": "b611eddf6f51841fb1849dde92b2013f5bc33ca3e4a5ceb645326c22a8e3e4f7"
-        }
+    # 🔑 Aqui definimos df_predicoes (sempre disponível depois desta célula)
+    df_predicoes = pd.DataFrame({
+        'id': dados_teste_prep.get('id', np.arange(len(preds_test))),
+        'pred': preds_test
+    })
+    if proba_test is not None:
+        df_predicoes['proba'] = proba_test
 
-      # --- 3. Parâmetros (threshold pode ser ajustado no sidebar) ---
-        params = {"threshold": 0.5}
+    st.dataframe(df_predicoes.head())
 
-      # --- 4. Envio ---
-        files = {"file": ("submission.csv", csv_buffer.getvalue())}
-        url_api = "http://34.193.187.218:5000/evaluate/multilabel_metrics"
+    # --- Envio para API ---
+    if st.button("📡 Enviar predições para API"):
+        try:
+            import io
 
-        resp = requests.post(url_api, headers=headers, files=files, params=params, timeout=60)
+            # Gera CSV no formato esperado (ajustar conforme bootcamp_submission_example.csv)
+            colunas = ['FDF', 'FDC', 'FP', 'FTE', 'FA']
+            df_submission = pd.DataFrame(0, index=df_predicoes.index, columns=colunas)
+            df_submission.loc[df_predicoes['pred'] == 1, 'FDF'] = 1  # exemplo simples
 
-      # --- 5. Resultado ---
-        st.write("Status:", resp.status_code)
-        if resp.status_code == 200:
-          st.json(resp.json())
-        else:
-          st.error(f"Erro: {resp.text}")
+            # Salva CSV em memória
+            csv_buffer = io.StringIO()
+            df_submission.to_csv(csv_buffer, index=False)
+            csv_buffer.seek(0)
 
-  except Exception as e:
-    st.error(f"Erro ao enviar para a API: {e}")
+            # Token fixo
+            headers = {
+                "X-API-Key": "b611eddf6f51841fb1849dde92b2013f5bc33ca3e4a5ceb645326c22a8e3e4f7"
+            }
+            params = {"threshold": 0.5}
+
+            url_api = "http://34.193.187.218:5000/evaluate/multilabel_metrics"
+            files = {"file": ("submission.csv", csv_buffer.getvalue())}
+
+            resp = requests.post(url_api, headers=headers, files=files, params=params, timeout=60)
+
+            st.write("Status:", resp.status_code)
+            if resp.status_code == 200:
+                st.json(resp.json())
+            else:
+                st.error(f"Erro: {resp.text}")
+
+        except Exception as e:
+            st.error(f"Erro ao enviar para a API: {e}")
+
 else:
     st.info("Nenhum arquivo de teste fornecido (bootcamp_test.csv).")
 
 st.markdown("---")
 st.caption("Feito para o projeto do Bootcamp Ciência de Dados e IA, SESI/SENAI SC")
+
