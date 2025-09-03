@@ -98,8 +98,13 @@ def preparar_dados(df, treino=True, adicionar_dif_temp=True, adicionar_potencia=
             codificador_falha = LabelEncoder()
             dados['tipo_falha_codificado'] = codificador_falha.fit_transform(dados['tipo_falha_nome'])
         elif 'falha_maquina' in dados.columns:
-            # se somente falha_maquina estiver disponível
-            dados['qualquer_falha'] = dados['falha_maquina'].astype(int)
+        # converte valores para número (ex: 0/1), trata inválidos como 0
+            dados['qualquer_falha'] = (
+                pd.to_numeric(dados['falha_maquina'], errors='coerce')
+                .fillna(0)
+                .astype(int)
+            )
+
 
     return dados, codificador_tipo, codificador_falha
 
