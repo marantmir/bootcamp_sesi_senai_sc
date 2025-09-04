@@ -23,11 +23,27 @@ def carregar_dados(arquivo_treino, arquivo_teste):
 
 def preprocessar_dados(treino, teste):
     """Pré-processa os dados: normalização e codificação."""
-    X_train = treino.drop("target", axis=1)
-    y_train = treino["target"]
 
-    X_test = teste.drop("target", axis=1)
-    y_test = teste["target"]
+    # Detectar coluna alvo automaticamente
+    possiveis_alvos = ["target", "label", "classe", "y", "falha"]
+    coluna_alvo = None
+
+    for col in treino.columns:
+        if col.lower() in possiveis_alvos:
+            coluna_alvo = col
+            break
+
+    if not coluna_alvo:
+        # Caso nenhuma coluna conhecida seja encontrada, usa a última
+        coluna_alvo = treino.columns[-1]
+        st.warning(f"⚠️ Coluna alvo não encontrada explicitamente. Usando '{coluna_alvo}' como target.")
+
+    # Separar X e y
+    X_train = treino.drop(coluna_alvo, axis=1)
+    y_train = treino[coluna_alvo]
+
+    X_test = teste.drop(coluna_alvo, axis=1)
+    y_test = teste[coluna_alvo]
 
     # Normalização
     scaler = StandardScaler()
@@ -41,7 +57,6 @@ def preprocessar_dados(treino, teste):
         y_test = encoder.transform(y_test)
 
     return X_train, X_test, y_train, y_test
-
 
 def treinar_modelos(X_train, y_train):
     """Treina os modelos e retorna os objetos treinados e histórico."""
