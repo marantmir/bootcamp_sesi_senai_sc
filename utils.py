@@ -46,8 +46,9 @@ def preprocessar_dados(
     teste: Optional[pd.DataFrame] = None,
     possiveis_alvos: Optional[List[str]] = None,
     verbose: bool = False
-) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, Optional[np.ndarray], StandardScaler, List[str]]:
+) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], np.ndarray, Optional[np.ndarray], StandardScaler, List[str]]:
     """
+    Pré-processa os dados de treino e teste:
     - Detecta coluna alvo automaticamente
     - Alinha colunas entre treino e teste
     - Imputa valores ausentes pela mediana
@@ -58,7 +59,7 @@ def preprocessar_dados(
     (X_train, X_test, y_train, y_test, scaler, features)
     """
     treino = treino.copy()
-    teste = teste.copy() if teste is not None else pd.DataFrame()
+    teste = teste.copy() if teste is not None else None
 
     # possíveis nomes da coluna alvo
     if possiveis_alvos is None:
@@ -71,16 +72,18 @@ def preprocessar_dados(
     if coluna_alvo is None:
         coluna_alvo = treino.columns[-1]  # fallback
         if verbose:
-            print(f"[INFO] Nenhuma coluna alvo conhecida encontrada. Usando '{coluna_alvo}'.")
+            print(f"[WARN] Nenhuma coluna alvo conhecida encontrada. Usando '{coluna_alvo}'.")
 
     # separar treino
+    if coluna_alvo not in treino.columns:
+        raise KeyError(f"A coluna alvo '{coluna_alvo}' não existe no dataset de treino.")
+    
     y_train_raw = treino[coluna_alvo]
     X_train_raw = treino.drop(columns=[coluna_alvo])
 
     # separar teste (se existir)
-    y_test_raw = None
-    X_test_raw = pd.DataFrame()
-    if not teste.empty:
+    y_test_raw, X_test_raw = None, None
+    if teste is not None and not teste.empty:
         if coluna_alvo in teste.columns:
             y_test_raw = teste[coluna_alvo]
             X_test_raw = teste.drop(columns=[coluna_alvo])
@@ -88,30 +91,35 @@ def preprocessar_dados(
             X_test_raw = teste.copy()
 
     # alinhar categorias
-    concat = pd.concat([X_train_raw, X_test_raw], axis=0, ignore_index=True, sort=False)
+    if X_test_raw is not None:
+        concat = pd.concat([X_train_raw, X_test_raw], axis=0, ignore_index=True, sort=False)
+    else:
+        concat = X_train_raw.copy()
+
     concat_d = pd.get_dummies(concat)
 
     split_index = len(X_train_raw)
     X_train_d = concat_d.iloc[:split_index, :].reset_index(drop=True)
-    X_test_d = concat_d.iloc[split_index:, :].reset_index(drop=True) if not X_test_raw.empty else pd.DataFrame(columns=concat_d.columns)
+    X_test_d = concat_d.iloc[split_index:, :].reset_index(drop=True) if X_test_raw is not None else None
 
     # imputação
     medians = X_train_d.median()
     X_train_d.fillna(medians, inplace=True)
-    if not X_test_d.empty:
+    if X_test_d is not None:
         X_test_d.fillna(medians, inplace=True)
 
     # escalonamento
     scaler = StandardScaler()
     X_train = pd.DataFrame(scaler.fit_transform(X_train_d), columns=X_train_d.columns)
-    X_test = pd.DataFrame(scaler.transform(X_test_d), columns=X_test_d.columns) if not X_test_d.empty else pd.DataFrame(columns=X_train_d.columns)
+    X_test = pd.DataFrame(scaler.transform(X_test_d), columns=X_test_d.columns) if X_test_d is not None else None
 
     # label encoding
     y_train, y_test = None, None
     if y_train_raw is not None:
         if pd.api.types.is_object_dtype(y_train_raw):
             encoder = LabelEncoder()
-            y_train = encoder.fit_transform(y_train_raw.astype(str))
+            encoder.fit(y_train_raw.astype(str))
+            y_train = encoder.transform(y_train_raw.astype(str))
             if y_test_raw is not None:
                 y_test = [
                     encoder.transform([v])[0] if v in encoder.classes_ else -1
@@ -122,7 +130,8 @@ def preprocessar_dados(
             y_test = y_test_raw.values if y_test_raw is not None else None
 
     if verbose:
-        print(f"[INFO] X_train: {X_train.shape}, X_test: {X_test.shape}")
+        print(f"[INFO] X_train: {X_train.shape}, X_test: {X_test.shape if X_test is not None else 'None'}")
         print(f"[INFO] Coluna alvo: {coluna_alvo}")
 
     return X_train, X_test, y_train, y_test, scaler, list(X_train.columns)
+
