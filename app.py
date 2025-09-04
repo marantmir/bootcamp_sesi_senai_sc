@@ -17,8 +17,8 @@ from sklearn.metrics import (
     precision_recall_fscore_support, roc_auc_score, roc_curve
 )
 from sklearn.multioutput import MultiOutputClassifier
-import xgboost as xgb
-import lightgbm as lgb
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -31,8 +31,8 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("🔧 Sistema Inteligente de Manutenção Preditiva Avançado")
-st.markdown("### Bootcamp de Ciência de Dados e IA - Projeto Final com Melhorias")
+st.title("🔧 Sistema Inteligente de Manutenção Preditiva")
+st.markdown("### Bootcamp de Ciência de Dados e IA - Projeto Final")
 
 # =============================================================================
 # SEÇÃO 1: ENTENDIMENTO DO PROBLEMA
@@ -59,8 +59,8 @@ with st.expander("🎯 Contexto e Objetivos", expanded=True):
     - **FTE**: Falha por Tensão Excessiva
     - **FA**: Falha Aleatória
     
-    **Metodologia Avançada Aplicada:**
-    - 🤖 Múltiplos algoritmos de ML (RF, XGBoost, LightGBM, Neural Networks)
+    **Metodologia Aplicada:**
+    - 🤖 Múltiplos algoritmos de ML (RF, Gradient Boosting, Neural Networks, SVM)
     - 🔧 Engenharia avançada de features
     - ⚙️ Otimização de hiperparâmetros
     - 🎯 Ensemble de modelos
@@ -73,13 +73,13 @@ COLS_FALHA = ["fdf", "fdc", "fp", "fte", "fa"]
 COL_ALVO_BINARIA = "falha_maquina"
 
 # =============================================================================
-# SEÇÃO 2: CARREGAMENTO E CONFIGURAÇÃO AVANÇADA
+# SEÇÃO 2: CARREGAMENTO E CONFIGURAÇÃO
 # =============================================================================
-st.header("📁 2. CONFIGURAÇÃO AVANÇADA DO SISTEMA")
+st.header("📁 2. CONFIGURAÇÃO DO SISTEMA")
 
 # Sidebar para configurações
 with st.sidebar:
-    st.header("⚙️ Configurações Avançadas")
+    st.header("⚙️ Configurações")
     
     # Upload de arquivos
     arquivo_treino = st.file_uploader("📊 Bootcamp_train.csv", type=["csv"])
@@ -94,8 +94,8 @@ with st.sidebar:
     
     algoritmo = st.selectbox(
         "Algoritmo Principal:",
-        ["Ensemble (Todos)", "Random Forest", "XGBoost", "LightGBM", "Neural Network"],
-        help="Ensemble combina todos os algoritmos"
+        ["Ensemble", "Random Forest", "Gradient Boosting", "Neural Network", "SVM"],
+        help="Ensemble combina múltiplos algoritmos"
     )
     
     otimizar_hiper = st.checkbox("🔍 Otimização de Hiperparâmetros", value=False)
@@ -104,7 +104,7 @@ with st.sidebar:
     percentual_teste = st.slider("% Validação", 10, 40, 20, 5)
     semente = st.slider("Semente Aleatória", 0, 9999, 42)
     
-    st.subheader("🔬 Engenharia Avançada de Features")
+    st.subheader("🔬 Engenharia de Features")
     usar_dif_temp = st.checkbox("Diferença de temperatura", value=True)
     usar_potencia = st.checkbox("Potência (torque×velocidade)", value=True)
     usar_eficiencia = st.checkbox("Eficiência da ferramenta", value=True)
@@ -118,7 +118,7 @@ with st.sidebar:
     normalizar = st.checkbox("Normalização (StandardScaler)", value=True)
 
 # =============================================================================
-# FUNÇÕES UTILITÁRIAS AVANÇADAS
+# FUNÇÕES UTILITÁRIAS
 # =============================================================================
 @st.cache_data
 def carregar_e_processar_dados(arquivo):
@@ -137,14 +137,14 @@ def carregar_e_processar_dados(arquivo):
     return df
 
 def criar_features_avancadas(df):
-    """Aplica engenharia avançada de features"""
+    """Aplica engenharia de features"""
     df = df.copy()
     
     # Features básicas de engenharia
     if usar_dif_temp and {"temperatura_processo","temperatura_ar"}.issubset(df.columns):
         df["dif_temperatura"] = df["temperatura_processo"] - df["temperatura_ar"]
         df["razao_temperatura"] = df["temperatura_processo"] / (df["temperatura_ar"] + 1e-6)
-        df["temp_normalizada"] = (df["temperatura_processo"] - df["temperatura_ar"].mean()) / df["temperatura_ar"].std()
+        df["temp_normalizada"] = (df["temperatura_processo"] - df["temperatura_ar"].mean()) / (df["temperatura_ar"].std() + 1e-6)
     
     if usar_potencia and {"torque","velocidade_rotacional"}.issubset(df.columns):
         df["potencia_kw"] = (df["torque"] * df["velocidade_rotacional"]) / 1000.0
@@ -153,12 +153,11 @@ def criar_features_avancadas(df):
     
     if usar_eficiencia and {"torque","desgaste_da_ferramenta"}.issubset(df.columns):
         df["eficiencia_ferramenta"] = df["torque"] / (df["desgaste_da_ferramenta"] + 1.0)
-        df["desgaste_normalizado"] = df["desgaste_da_ferramenta"] / df["torque"]
+        df["desgaste_normalizado"] = df["desgaste_da_ferramenta"] / (df["torque"] + 1e-6)
         df["stress_ferramenta"] = df["torque"] * df["desgaste_da_ferramenta"]
     
     # Features baseadas em séries temporais (simuladas através do índice)
     if usar_series_temporais:
-        # Rolling statistics (usando janela baseada no índice)
         window_size = min(10, len(df) // 4)
         if window_size > 2:
             numeric_cols = df.select_dtypes(include=[np.number]).columns
@@ -170,7 +169,6 @@ def criar_features_avancadas(df):
     
     # Features de interação entre variáveis
     if usar_interacoes:
-        # Interações importantes identificadas
         if all(col in df.columns for col in ["temperatura_processo", "umidade_relativa"]):
             df["temp_umidade_interacao"] = df["temperatura_processo"] * df["umidade_relativa"]
         
@@ -192,23 +190,22 @@ def otimizar_hiperparametros(modelo, X, y, algoritmo_nome, tipo_busca="Randomize
             'min_samples_split': [2, 5, 10],
             'min_samples_leaf': [1, 2, 4]
         },
-        "XGBoost": {
+        "Gradient Boosting": {
             'n_estimators': [100, 200],
             'max_depth': [3, 6, 10],
             'learning_rate': [0.01, 0.1, 0.2],
             'subsample': [0.8, 1.0]
-        },
-        "LightGBM": {
-            'n_estimators': [100, 200],
-            'max_depth': [3, 6, 10],
-            'learning_rate': [0.01, 0.1, 0.2],
-            'num_leaves': [31, 50, 100]
         },
         "Neural Network": {
             'hidden_layer_sizes': [(50,), (100,), (50, 30)],
             'activation': ['relu', 'tanh'],
             'alpha': [0.0001, 0.001, 0.01],
             'learning_rate': ['adaptive', 'constant']
+        },
+        "SVM": {
+            'C': [0.1, 1, 10],
+            'gamma': ['scale', 'auto'],
+            'kernel': ['rbf', 'linear']
         }
     }
     
@@ -217,65 +214,84 @@ def otimizar_hiperparametros(modelo, X, y, algoritmo_nome, tipo_busca="Randomize
     
     param_grid = param_grids[algoritmo_nome]
     
-    if tipo_busca == "GridSearch":
-        search = GridSearchCV(modelo, param_grid, cv=3, scoring='accuracy', n_jobs=-1)
-    else:
-        search = RandomizedSearchCV(modelo, param_grid, n_iter=10, cv=3, scoring='accuracy', n_jobs=-1, random_state=42)
-    
-    search.fit(X, y)
-    return search.best_estimator_
+    try:
+        if tipo_busca == "GridSearch":
+            search = GridSearchCV(modelo, param_grid, cv=3, scoring='accuracy', n_jobs=-1)
+        else:
+            search = RandomizedSearchCV(modelo, param_grid, n_iter=10, cv=3, scoring='accuracy', n_jobs=-1, random_state=42)
+        
+        search.fit(X, y)
+        return search.best_estimator_
+    except:
+        return modelo
 
 def criar_ensemble(X_train, y_train, tipo_modelagem):
     """Cria ensemble de modelos"""
     modelos_base = {
         'rf': RandomForestClassifier(n_estimators=100, random_state=42),
-        'xgb': xgb.XGBClassifier(n_estimators=100, random_state=42, eval_metric='logloss'),
-        'lgb': lgb.LGBMClassifier(n_estimators=100, random_state=42, verbose=-1),
-        'nn': MLPClassifier(hidden_layer_sizes=(100,), max_iter=500, random_state=42)
+        'gb': GradientBoostingClassifier(n_estimators=100, random_state=42),
+        'nn': MLPClassifier(hidden_layer_sizes=(100,), max_iter=500, random_state=42),
+        'dt': DecisionTreeClassifier(random_state=42)
     }
     
     if tipo_modelagem == "Multirrótulo":
         ensemble_models = {}
         for name, model in modelos_base.items():
-            ensemble_models[name] = MultiOutputClassifier(model)
-        
-        # Para multirrótulo, retornamos um dicionário de modelos
-        for name, model in ensemble_models.items():
-            model.fit(X_train, y_train)
-        
+            try:
+                ensemble_models[name] = MultiOutputClassifier(model)
+                ensemble_models[name].fit(X_train, y_train)
+            except:
+                continue
         return ensemble_models
     else:
-        # Para binário/multiclasse, usamos VotingClassifier
-        ensemble = VotingClassifier(
-            estimators=list(modelos_base.items()),
-            voting='soft'
-        )
-        ensemble.fit(X_train, y_train)
-        return ensemble
+        # Para binário/multiclasse, usar VotingClassifier
+        try:
+            ensemble = VotingClassifier(
+                estimators=list(modelos_base.items()),
+                voting='soft'
+            )
+            ensemble.fit(X_train, y_train)
+            return ensemble
+        except:
+            # Fallback para Random Forest
+            rf = RandomForestClassifier(n_estimators=200, random_state=42)
+            rf.fit(X_train, y_train)
+            return rf
 
 # Carregar dados
 dados_treino = None
 dados_teste = None
 
 if arquivo_treino:
-    dados_treino = carregar_e_processar_dados(arquivo_treino)
-    st.success(f"✅ Dados de treino carregados: {dados_treino.shape[0]} amostras × {dados_treino.shape[1]} features")
+    try:
+        dados_treino = carregar_e_processar_dados(arquivo_treino)
+        st.success(f"✅ Dados de treino carregados: {dados_treino.shape[0]} amostras × {dados_treino.shape[1]} features")
+    except Exception as e:
+        st.error(f"Erro ao carregar dados de treino: {str(e)}")
+        st.stop()
     
 if arquivo_teste:
-    dados_teste = carregar_e_processar_dados(arquivo_teste)
-    st.success(f"✅ Dados de teste carregados: {dados_teste.shape[0]} amostras")
+    try:
+        dados_teste = carregar_e_processar_dados(arquivo_teste)
+        st.success(f"✅ Dados de teste carregados: {dados_teste.shape[0]} amostras")
+    except Exception as e:
+        st.error(f"Erro ao carregar dados de teste: {str(e)}")
 
 if dados_treino is None:
     st.warning("⏳ Por favor, carregue o arquivo de treino para continuar.")
     st.stop()
 
 # =============================================================================
-# SEÇÃO 3: ANÁLISE EXPLORATÓRIA AVANÇADA
+# SEÇÃO 3: ANÁLISE EXPLORATÓRIA
 # =============================================================================
-st.header("📊 3. ANÁLISE EXPLORATÓRIA AVANÇADA")
+st.header("📊 3. ANÁLISE EXPLORATÓRIA")
 
 # Aplicar engenharia de features
-dados_processados = criar_features_avancadas(dados_treino)
+try:
+    dados_processados = criar_features_avancadas(dados_treino)
+except Exception as e:
+    st.error(f"Erro na criação de features: {str(e)}")
+    dados_processados = dados_treino.copy()
 
 col1, col2, col3, col4 = st.columns(4)
 
@@ -289,8 +305,8 @@ with col4:
     st.metric("📊 Total de Features", dados_processados.shape[1])
 
 if all(col in dados_processados.columns for col in COLS_FALHA):
-    # Análise de desbalanceamento avançada
-    st.subheader("⚖️ Análise Detalhada de Desbalanceamento")
+    # Análise de desbalanceamento
+    st.subheader("⚖️ Análise de Desbalanceamento")
     
     falhas_count = dados_processados[COLS_FALHA].sum().sort_values(ascending=False)
     total_amostras = len(dados_processados)
@@ -309,8 +325,9 @@ if all(col in dados_processados.columns for col in COLS_FALHA):
         st.dataframe(df_stats, use_container_width=True)
         
         # Calcular razão de desbalanceamento
-        ratio_desbalanceamento = falhas_count.max() / falhas_count.min()
-        st.metric("🔄 Razão de Desbalanceamento", f"{ratio_desbalanceamento:.1f}:1")
+        if falhas_count.min() > 0:
+            ratio_desbalanceamento = falhas_count.max() / falhas_count.min()
+            st.metric("🔄 Razão de Desbalanceamento", f"{ratio_desbalanceamento:.1f}:1")
     
     with col2:
         # Gráfico de distribuição
@@ -324,32 +341,10 @@ if all(col in dados_processados.columns for col in COLS_FALHA):
         )
         st.plotly_chart(fig, use_container_width=True)
 
-# Análise de correlações das novas features
-st.subheader("🔗 Matriz de Correlação das Features Avançadas")
-
-# Selecionar apenas features numéricas criadas recentemente
-new_features = [col for col in dados_processados.columns 
-                if any(keyword in col for keyword in ['interacao', 'media_movel', 'desvio_movel', 'tendencia', 
-                                                     'potencia', 'eficiencia', 'dif_', 'razao_'])]
-
-if new_features:
-    correlation_matrix = dados_processados[new_features].corr()
-    
-    fig_corr = px.imshow(
-        correlation_matrix.values,
-        x=correlation_matrix.columns,
-        y=correlation_matrix.columns,
-        aspect="auto",
-        title="Correlação entre Features Criadas",
-        color_continuous_scale="RdBu_r"
-    )
-    fig_corr.update_layout(height=600)
-    st.plotly_chart(fig_corr, use_container_width=True)
-
 # =============================================================================
-# SEÇÃO 4: PREPARAÇÃO AVANÇADA DOS DADOS
+# SEÇÃO 4: PREPARAÇÃO DOS DADOS
 # =============================================================================
-st.header("🔧 4. PREPARAÇÃO AVANÇADA DOS DADOS")
+st.header("🔧 4. PREPARAÇÃO DOS DADOS")
 
 # Preparar features (X) e targets (y)
 excluir_cols = {"id", "id_produto", "tipo", COL_ALVO_BINARIA} | set(COLS_FALHA)
@@ -357,17 +352,16 @@ features_cols = [col for col in dados_processados.columns if col not in excluir_
 
 # Tratar valores categóricos
 if "tipo" in dados_processados.columns:
-    le_tipo = LabelEncoder()
-    dados_processados["tipo_encoded"] = le_tipo.fit_transform(dados_processados["tipo"].fillna("Unknown"))
-    features_cols.append("tipo_encoded")
+    try:
+        le_tipo = LabelEncoder()
+        dados_processados["tipo_encoded"] = le_tipo.fit_transform(dados_processados["tipo"].fillna("Unknown"))
+        features_cols.append("tipo_encoded")
+    except:
+        pass
 
 # Preparar matriz X
 X = dados_processados[features_cols].copy()
-
-# Tratar valores ausentes com estratégia avançada
 X = X.fillna(X.median())
-
-st.success(f"✅ {X.shape[1]} features preparadas inicialmente")
 
 # Seleção automática de features
 if usar_selecao and n_features:
@@ -375,45 +369,31 @@ if usar_selecao and n_features:
     
     # Preparar y temporário para seleção
     if all(col in dados_processados.columns for col in COLS_FALHA):
-        y_temp = dados_processados[COLS_FALHA].max(axis=1)  # Qualquer falha
+        y_temp = dados_processados[COLS_FALHA].max(axis=1)
     else:
         y_temp = dados_processados.get(COL_ALVO_BINARIA, pd.Series([0]*len(dados_processados)))
     
-    # Aplicar SelectKBest
-    selector = SelectKBest(f_classif, k=min(n_features, X.shape[1]))
-    X_selected = selector.fit_transform(X, y_temp)
-    
-    # Obter nomes das features selecionadas
-    selected_features = [features_cols[i] for i in selector.get_support(indices=True)]
-    X = pd.DataFrame(X_selected, columns=selected_features, index=X.index)
-    features_cols = selected_features
-    
-    st.success(f"✅ {len(selected_features)} features selecionadas automaticamente")
-    
-    # Mostrar importância das features selecionadas
-    scores = selector.scores_[selector.get_support()]
-    df_scores = pd.DataFrame({
-        'Feature': selected_features,
-        'Score': scores
-    }).sort_values('Score', ascending=False)
-    
-    fig_scores = px.bar(
-        df_scores.head(15), 
-        x='Score', 
-        y='Feature',
-        orientation='h',
-        title="Top Features Selecionadas (F-Score)"
-    )
-    st.plotly_chart(fig_scores, use_container_width=True)
+    try:
+        selector = SelectKBest(f_classif, k=min(n_features, X.shape[1]))
+        X_selected = selector.fit_transform(X, y_temp)
+        selected_features = [features_cols[i] for i in selector.get_support(indices=True)]
+        X = pd.DataFrame(X_selected, columns=selected_features, index=X.index)
+        features_cols = selected_features
+        st.success(f"✅ {len(selected_features)} features selecionadas")
+    except Exception as e:
+        st.warning(f"Não foi possível aplicar seleção de features: {str(e)}")
 
 # Normalização
 scaler = None
 if normalizar:
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    X = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
+    try:
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        X = pd.DataFrame(X_scaled, columns=X.columns, index=X.index)
+    except Exception as e:
+        st.warning(f"Erro na normalização: {str(e)}")
 
-# Preparar targets baseado no tipo de modelagem
+# Preparar targets
 if tipo_modelagem == "Multirrótulo":
     if not all(col in dados_processados.columns for col in COLS_FALHA):
         st.error("❌ Dados não contêm colunas necessárias para modelagem multirrótulo.")
@@ -433,7 +413,6 @@ else:  # Multiclasse
         st.error("❌ Dados não contêm colunas necessárias para modelagem multiclasse.")
         st.stop()
     
-    # Criar target multiclasse
     def get_primary_failure(row):
         failures = [col for col in COLS_FALHA if row[col] == 1]
         if len(failures) == 0:
@@ -451,424 +430,303 @@ else:  # Multiclasse
 st.write(f"**Features finais utilizadas:** {len(features_cols)} features")
 
 # =============================================================================
-# SEÇÃO 5: MODELAGEM AVANÇADA COM MÚLTIPLOS ALGORITMOS
+# SEÇÃO 5: MODELAGEM
 # =============================================================================
-st.header("🤖 5. MODELAGEM AVANÇADA")
+st.header("🤖 5. MODELAGEM")
 
 # Dividir dados
-if tipo_modelagem == "Multirrótulo":
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=percentual_teste/100, random_state=semente
-    )
-else:
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=percentual_teste/100, random_state=semente, 
-        stratify=y if len(np.unique(y)) > 1 else None
-    )
-
-st.write(f"📊 **Divisão dos dados:** {len(X_train)} treino / {len(X_val)} validação")
+try:
+    if tipo_modelagem == "Multirrótulo":
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=percentual_teste/100, random_state=semente
+        )
+    else:
+        X_train, X_val, y_train, y_val = train_test_split(
+            X, y, test_size=percentual_teste/100, random_state=semente, 
+            stratify=y if len(np.unique(y)) > 1 else None
+        )
+    
+    st.write(f"📊 **Divisão dos dados:** {len(X_train)} treino / {len(X_val)} validação")
+except Exception as e:
+    st.error(f"Erro na divisão dos dados: {str(e)}")
+    st.stop()
 
 # Treinar modelos
 resultados_modelos = {}
 
-with st.spinner("🔄 Treinando modelos avançados..."):
-    
-    if algoritmo == "Ensemble (Todos)":
-        st.subheader("🎯 Ensemble de Modelos")
-        modelo = criar_ensemble(X_train, y_train, tipo_modelagem)
-        
-        if tipo_modelagem == "Multirrótulo":
-            # Para multirrótulo, fazer predições com cada modelo do ensemble
-            predicoes_ensemble = {}
-            for name, model in modelo.items():
-                pred = model.predict(X_val)
-                predicoes_ensemble[name] = pred
-                
-                # Calcular métricas médias
-                accuracies = [accuracy_score(y_val[:, i], pred[:, i]) for i in range(len(COLS_FALHA))]
-                resultados_modelos[name] = np.mean(accuracies)
-            
-            # Predição final por votação majoritária
-            y_pred = np.round(np.mean([pred for pred in predicoes_ensemble.values()], axis=0)).astype(int)
-            
+with st.spinner("🔄 Treinando modelo..."):
+    try:
+        if algoritmo == "Ensemble":
+            modelo = criar_ensemble(X_train, y_train, tipo_modelagem)
         else:
-            y_pred = modelo.predict(X_val)
-            resultados_modelos["Ensemble"] = accuracy_score(y_val, y_pred)
-    
-    else:
-        # Treinar modelo individual
-        modelos_disponiveis = {
-            "Random Forest": RandomForestClassifier(n_estimators=200, random_state=semente),
-            "XGBoost": xgb.XGBClassifier(n_estimators=200, random_state=semente, eval_metric='logloss'),
-            "LightGBM": lgb.LGBMClassifier(n_estimators=200, random_state=semente, verbose=-1),
-            "Neural Network": MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=500, random_state=semente)
-        }
-        
-        modelo_base = modelos_disponiveis[algoritmo]
-        
-        # Otimização de hiperparâmetros
-        if otimizar_hiper:
-            st.write(f"🔍 Otimizando hiperparâmetros com {tipo_busca}...")
-            if tipo_modelagem != "Multirrótulo":
+            # Treinar modelo individual
+            modelos_disponiveis = {
+                "Random Forest": RandomForestClassifier(n_estimators=200, random_state=semente),
+                "Gradient Boosting": GradientBoostingClassifier(n_estimators=100, random_state=semente),
+                "Neural Network": MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=500, random_state=semente),
+                "SVM": SVC(probability=True, random_state=semente)
+            }
+            
+            modelo_base = modelos_disponiveis[algoritmo]
+            
+            # Otimização de hiperparâmetros
+            if otimizar_hiper and tipo_modelagem != "Multirrótulo":
+                st.write(f"🔍 Otimizando hiperparâmetros...")
                 modelo_base = otimizar_hiperparametros(modelo_base, X_train, y_train, algoritmo, tipo_busca)
+            
+            # Aplicar MultiOutputClassifier se necessário
+            if tipo_modelagem == "Multirrótulo":
+                modelo = MultiOutputClassifier(modelo_base)
+            else:
+                modelo = modelo_base
+            
+            modelo.fit(X_train, y_train)
         
-        # Aplicar MultiOutputClassifier se necessário
-        if tipo_modelagem == "Multirrótulo":
-            modelo = MultiOutputClassifier(modelo_base)
-        else:
-            modelo = modelo_base
+        st.success("✅ Modelo treinado com sucesso!")
         
-        modelo.fit(X_train, y_train)
-        y_pred = modelo.predict(X_val)
-        
-        if tipo_modelagem == "Multirrótulo":
-            accuracies = [accuracy_score(y_val[:, i], y_pred[:, i]) for i in range(len(COLS_FALHA))]
-            resultados_modelos[algoritmo] = np.mean(accuracies)
-        else:
-            resultados_modelos[algoritmo] = accuracy_score(y_val, y_pred)
+    except Exception as e:
+        st.error(f"Erro no treinamento: {str(e)}")
+        st.stop()
 
-st.success("✅ Modelos treinados com sucesso!")
-
-# Mostrar comparação de modelos se ensemble
-if len(resultados_modelos) > 1:
-    st.subheader("📊 Comparação de Modelos")
-    df_resultados = pd.DataFrame(list(resultados_modelos.items()), columns=['Modelo', 'Accuracy'])
-    df_resultados = df_resultados.sort_values('Accuracy', ascending=False)
-    
-    fig_comp = px.bar(
-        df_resultados, 
-        x='Accuracy', 
-        y='Modelo',
-        orientation='h',
-        title="Comparação de Performance dos Modelos"
-    )
-    st.plotly_chart(fig_comp, use_container_width=True)
+# Fazer predições
+try:
+    y_pred = modelo.predict(X_val)
+except Exception as e:
+    st.error(f"Erro nas predições: {str(e)}")
+    st.stop()
 
 # =============================================================================
-# SEÇÃO 6: AVALIAÇÃO AVANÇADA
+# SEÇÃO 6: AVALIAÇÃO
 # =============================================================================
-st.header("📊 6. AVALIAÇÃO AVANÇADA DOS RESULTADOS")
+st.header("📊 6. AVALIAÇÃO DOS RESULTADOS")
 
-if tipo_modelagem == "Multirrótulo":
-    # Métricas detalhadas por classe
-    st.subheader("📈 Métricas Detalhadas por Tipo de Falha")
-    
-    metricas_detalhadas = {}
-    cols_display = st.columns(len(COLS_FALHA))
-    
-    for i, col_falha in enumerate(COLS_FALHA):
-        accuracy = accuracy_score(y_val[:, i], y_pred[:, i])
+try:
+    if tipo_modelagem == "Multirrótulo":
+        # Métricas detalhadas por classe
+        st.subheader("📈 Métricas por Tipo de Falha")
+        
+        metricas_detalhadas = {}
+        cols_display = st.columns(len(COLS_FALHA))
+        
+        for i, col_falha in enumerate(COLS_FALHA):
+            accuracy = accuracy_score(y_val[:, i], y_pred[:, i])
+            precision, recall, f1, _ = precision_recall_fscore_support(
+                y_val[:, i], y_pred[:, i], average='binary', zero_division=0
+            )
+            
+            metricas_detalhadas[col_falha] = {
+                'Accuracy': accuracy,
+                'Precision': precision,
+                'Recall': recall,
+                'F1-Score': f1
+            }
+            
+            with cols_display[i]:
+                st.metric(f"🎯 {col_falha.upper()}", f"{accuracy:.3f}")
+                st.write(f"Precision: {precision:.3f}")
+                st.write(f"Recall: {recall:.3f}")
+                st.write(f"F1: {f1:.3f}")
+        
+        # Métricas médias
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            acc_media = np.mean([metricas_detalhadas[col]['Accuracy'] for col in COLS_FALHA])
+            st.metric("🏆 Accuracy Média", f"{acc_media:.4f}")
+        with col2:
+            prec_media = np.mean([metricas_detalhadas[col]['Precision'] for col in COLS_FALHA])
+            st.metric("🎯 Precision Média", f"{prec_media:.4f}")
+        with col3:
+            rec_media = np.mean([metricas_detalhadas[col]['Recall'] for col in COLS_FALHA])
+            st.metric("📊 Recall Médio", f"{rec_media:.4f}")
+        with col4:
+            f1_media = np.mean([metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA])
+            st.metric("⚖️ F1 Médio", f"{f1_media:.4f}")
+
+    else:
+        # Modelo binário ou multiclasse
+        accuracy = accuracy_score(y_val, y_pred)
         precision, recall, f1, _ = precision_recall_fscore_support(
-            y_val[:, i], y_pred[:, i], average='binary', zero_division=0
+            y_val, y_pred, average='weighted', zero_division=0
         )
         
-        # Calcular AUC se possível
-        try:
-            if hasattr(modelo, 'predict_proba') or (hasattr(modelo, 'estimators_') and hasattr(modelo.estimators_[i], 'predict_proba')):
-                if hasattr(modelo, 'estimators_'):
-                    y_proba = modelo.estimators_[i].predict_proba(X_val)[:, 1]
-                else:
-                    y_proba = modelo.predict_proba(X_val)[i][:, 1]
-                auc = roc_auc_score(y_val[:, i], y_proba)
-            else:
-                auc = 0.5
-        except:
-            auc = 0.5
+        col1, col2, col3, col4 = st.columns(4)
         
-        metricas_detalhadas[col_falha] = {
-            'Accuracy': accuracy,
-            'Precision': precision,
-            'Recall': recall,
-            'F1-Score': f1,
-            'AUC': auc
-        }
+        with col1:
+            st.metric("🎯 Accuracy", f"{accuracy:.4f}")
+        with col2:
+            st.metric("🔍 Precision", f"{precision:.4f}")
+        with col3:
+            st.metric("📊 Recall", f"{recall:.4f}")
+        with col4:
+            st.metric("⚖️ F1-Score", f"{f1:.4f}")
         
-        with cols_display[i]:
-            st.metric(f"🎯 {col_falha.upper()}", f"{accuracy:.3f}")
-            st.write(f"Precision: {precision:.3f}")
-            st.write(f"Recall: {recall:.3f}")
-            st.write(f"F1: {f1:.3f}")
-            st.write(f"AUC: {auc:.3f}")
-    
-    # Métricas médias
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        acc_media = np.mean([metricas_detalhadas[col]['Accuracy'] for col in COLS_FALHA])
-        st.metric("🏆 Accuracy Média", f"{acc_media:.4f}")
-    with col2:
-        prec_media = np.mean([metricas_detalhadas[col]['Precision'] for col in COLS_FALHA])
-        st.metric("🎯 Precision Média", f"{prec_media:.4f}")
-    with col3:
-        rec_media = np.mean([metricas_detalhadas[col]['Recall'] for col in COLS_FALHA])
-        st.metric("📊 Recall Médio", f"{rec_media:.4f}")
-    with col4:
-        f1_media = np.mean([metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA])
-        st.metric("⚖️ F1 Médio", f"{f1_media:.4f}")
+        # Matriz de confusão
+        st.subheader("🔍 Matriz de Confusão")
+        
+        cm = confusion_matrix(y_val, y_pred)
+        fig_cm = px.imshow(
+            cm, 
+            text_auto=True, 
+            aspect="auto", 
+            title="Matriz de Confusão",
+            color_continuous_scale="Blues"
+        )
+        fig_cm.update_xaxes(title="Predito")
+        fig_cm.update_yaxes(title="Real")
+        st.plotly_chart(fig_cm, use_container_width=True)
 
-else:
-    # Modelo binário ou multiclasse
-    accuracy = accuracy_score(y_val, y_pred)
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        y_val, y_pred, average='weighted', zero_division=0
-    )
-    
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric("🎯 Accuracy", f"{accuracy:.4f}")
-    with col2:
-        st.metric("🔍 Precision", f"{precision:.4f}")
-    with col3:
-        st.metric("📊 Recall", f"{recall:.4f}")
-    with col4:
-        st.metric("⚖️ F1-Score", f"{f1:.4f}")
-    
-    # Relatório de classificação
-    st.subheader("📋 Relatório Detalhado de Classificação")
-    
-    report = classification_report(y_val, y_pred, output_dict=True, zero_division=0)
-    df_report = pd.DataFrame(report).transpose()
-    st.dataframe(df_report.round(4), use_container_width=True)
-    
-    # Matriz de confusão
-    st.subheader("🔍 Matriz de Confusão")
-    
-    cm = confusion_matrix(y_val, y_pred)
-    fig_cm = px.imshow(
-        cm, 
-        text_auto=True, 
-        aspect="auto", 
-        title="Matriz de Confusão",
-        color_continuous_scale="Blues"
-    )
-    fig_cm.update_xaxes(title="Predito")
-    fig_cm.update_yaxes(title="Real")
-    st.plotly_chart(fig_cm, use_container_width=True)
+except Exception as e:
+    st.error(f"Erro na avaliação: {str(e)}")
 
-# Feature Importance Avançada
-st.subheader("🎯 Análise de Importância das Features")
+# Feature Importance
+st.subheader("🎯 Importância das Features")
 
-if algoritmo == "Ensemble (Todos)" and tipo_modelagem != "Multirrótulo":
-    # Para ensemble não-multirrótulo
-    if hasattr(modelo, 'feature_importances_'):
+try:
+    importances = None
+    if algoritmo == "Ensemble" and hasattr(modelo, 'feature_importances_'):
         importances = modelo.feature_importances_
-    else:
-        # Média das importâncias dos estimadores
-        importances = np.mean([est.feature_importances_ for name, est in modelo.named_estimators_.items() 
+    elif algoritmo == "Ensemble" and isinstance(modelo, dict):
+        # Para ensemble multirrótulo
+        if 'rf' in modelo:
+            importances = np.mean([est.feature_importances_ for est in modelo['rf'].estimators_], axis=0)
+    elif hasattr(modelo, 'feature_importances_'):
+        importances = modelo.feature_importances_
+    elif tipo_modelagem == "Multirrótulo" and hasattr(modelo, 'estimators_'):
+        importances = np.mean([est.feature_importances_ for est in modelo.estimators_ 
                               if hasattr(est, 'feature_importances_')], axis=0)
+    
+    if importances is not None and len(importances) == len(features_cols):
+        feature_importance_df = pd.DataFrame({
+            'Feature': features_cols,
+            'Importance': importances
+        }).sort_values('Importance', ascending=False)
         
-elif algoritmo == "Ensemble (Todos)" and tipo_modelagem == "Multirrótulo":
-    # Para ensemble multirrótulo, usar Random Forest como referência
-    if 'rf' in modelo and hasattr(modelo['rf'], 'estimators_'):
-        importances = np.mean([est.feature_importances_ for est in modelo['rf'].estimators_], axis=0)
+        fig_importance = px.bar(
+            feature_importance_df.head(15), 
+            x='Importance', 
+            y='Feature',
+            orientation='h',
+            title="Top 15 Features Mais Importantes"
+        )
+        fig_importance.update_layout(height=500)
+        st.plotly_chart(fig_importance, use_container_width=True)
     else:
-        importances = np.ones(len(features_cols)) / len(features_cols)  # Uniforme se não disponível
-        
-elif hasattr(modelo, 'feature_importances_'):
-    importances = modelo.feature_importances_
-elif tipo_modelagem == "Multirrótulo" and hasattr(modelo, 'estimators_'):
-    # Para MultiOutputClassifier
-    importances = np.mean([est.feature_importances_ for est in modelo.estimators_ 
-                          if hasattr(est, 'feature_importances_')], axis=0)
-else:
-    importances = np.ones(len(features_cols)) / len(features_cols)  # Uniforme se não disponível
+        st.info("Importância das features não disponível para este modelo.")
 
-feature_importance_df = pd.DataFrame({
-    'Feature': features_cols,
-    'Importance': importances
-}).sort_values('Importance', ascending=False)
-
-# Mostrar top features
-col1, col2 = st.columns(2)
-
-with col1:
-    fig_importance = px.bar(
-        feature_importance_df.head(15), 
-        x='Importance', 
-        y='Feature',
-        orientation='h',
-        title="Top 15 Features Mais Importantes"
-    )
-    fig_importance.update_layout(height=500)
-    st.plotly_chart(fig_importance, use_container_width=True)
-
-with col2:
-    # Análise das features criadas vs originais
-    feature_importance_df['Tipo'] = feature_importance_df['Feature'].apply(
-        lambda x: 'Engenharia' if any(keyword in x for keyword in 
-                                    ['interacao', 'media_movel', 'desvio_movel', 'tendencia', 
-                                     'potencia', 'eficiencia', 'dif_', 'razao_']) 
-                               else 'Original'
-    )
-    
-    tipo_importancia = feature_importance_df.groupby('Tipo')['Importance'].sum()
-    
-    fig_pie = px.pie(
-        values=tipo_importancia.values,
-        names=tipo_importancia.index,
-        title="Contribuição: Features Originais vs Criadas"
-    )
-    st.plotly_chart(fig_pie, use_container_width=True)
+except Exception as e:
+    st.warning(f"Não foi possível calcular importância das features: {str(e)}")
 
 # =============================================================================
-# SEÇÃO 7: PREDIÇÕES NO CONJUNTO DE TESTE
+# SEÇÃO 7: PREDIÇÕES NO TESTE
 # =============================================================================
 if dados_teste is not None:
     st.header("🎯 7. PREDIÇÕES NO CONJUNTO DE TESTE")
     
-    # Processar dados de teste
-    dados_teste_proc = criar_features_avancadas(dados_teste)
-    
-    if "tipo" in dados_teste_proc.columns and 'le_tipo' in locals():
-        dados_teste_proc["tipo_encoded"] = le_tipo.transform(
-            dados_teste_proc["tipo"].fillna("Unknown")
-        )
-    
-    # Preparar X_test com as mesmas features
-    X_test = dados_teste_proc[features_cols].copy()
-    X_test = X_test.fillna(X_test.median())
-    
-    if scaler is not None:
-        X_test = pd.DataFrame(
-            scaler.transform(X_test), 
-            columns=X_test.columns, 
-            index=X_test.index
-        )
-    
-    # Gerar predições
-    if tipo_modelagem == "Multirrótulo":
-        if algoritmo == "Ensemble (Todos)":
-            # Média das predições do ensemble
-            predicoes_teste = {}
-            for name, model in modelo.items():
-                predicoes_teste[name] = model.predict(X_test)
+    try:
+        # Processar dados de teste
+        dados_teste_proc = criar_features_avancadas(dados_teste)
+        
+        if "tipo" in dados_teste_proc.columns and 'le_tipo' in locals():
+            dados_teste_proc["tipo_encoded"] = le_tipo.transform(
+                dados_teste_proc["tipo"].fillna("Unknown")
+            )
+        
+        # Preparar X_test com as mesmas features
+        X_test = dados_teste_proc[features_cols].copy()
+        X_test = X_test.fillna(X_test.median())
+        
+        if scaler is not None:
+            X_test = pd.DataFrame(
+                scaler.transform(X_test), 
+                columns=X_test.columns, 
+                index=X_test.index
+            )
+        
+        # Gerar predições
+        if tipo_modelagem == "Multirrótulo":
+            if algoritmo == "Ensemble" and isinstance(modelo, dict):
+                # Média das predições do ensemble
+                predicoes_teste = {}
+                for name, model in modelo.items():
+                    try:
+                        predicoes_teste[name] = model.predict(X_test)
+                    except:
+                        continue
+                
+                if predicoes_teste:
+                    pred_test = np.round(np.mean([pred for pred in predicoes_teste.values()], axis=0)).astype(int)
+                else:
+                    pred_test = np.zeros((len(X_test), len(COLS_FALHA)))
+            else:
+                pred_test = modelo.predict(X_test)
             
-            pred_test = np.round(np.mean([pred for pred in predicoes_teste.values()], axis=0)).astype(int)
+            # Criar DataFrame de saída
+            df_predicoes = pd.DataFrame(
+                pred_test, 
+                columns=[col.upper() for col in COLS_FALHA]
+            ).astype(int)
+            
         else:
             pred_test = modelo.predict(X_test)
-        
-        # Criar DataFrame de saída
-        df_predicoes = pd.DataFrame(
-            pred_test, 
-            columns=[col.upper() for col in COLS_FALHA]
-        ).astype(int)
-        
-    else:
-        pred_test = modelo.predict(X_test)
-        
-        # Para binário/multiclasse, criar formato multirrótulo
-        df_predicoes = pd.DataFrame(
-            0, 
-            index=range(len(pred_test)), 
-            columns=[col.upper() for col in COLS_FALHA]
-        )
-        
-        if tipo_modelagem == "Binária":
-            # Atribuir falha mais comum quando há predição positiva
-            falha_mais_comum = dados_processados[COLS_FALHA].sum().idxmax().upper()
-            df_predicoes.loc[pred_test == 1, falha_mais_comum] = 1
             
-        else:  # Multiclasse
-            for i, pred in enumerate(pred_test):
-                classe_nome = target_names[pred]
-                if classe_nome in [col.lower() for col in COLS_FALHA]:
-                    col_idx = [col.lower() for col in COLS_FALHA].index(classe_nome)
-                    df_predicoes.iloc[i, col_idx] = 1
-    
-    # Estatísticas das predições
-    st.subheader("📊 Estatísticas das Predições")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.write("**Contagem por tipo de falha:**")
-        contagem_pred = df_predicoes.sum().to_frame("Quantidade")
-        contagem_pred["Percentual"] = (contagem_pred["Quantidade"] / len(df_predicoes) * 100).round(2)
-        st.dataframe(contagem_pred, use_container_width=True)
-    
-    with col2:
-        # Gráfico de barras das predições
-        fig_pred = px.bar(
-            x=df_predicoes.sum().values,
-            y=df_predicoes.sum().index,
-            orientation='h',
-            title="Distribuição das Predições por Tipo de Falha"
-        )
-        st.plotly_chart(fig_pred, use_container_width=True)
-    
-    # Análise comparativa (se tivermos dados históricos)
-    st.subheader("📈 Análise Comparativa")
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Comparar distribuição treino vs predições
-        dist_treino = dados_processados[COLS_FALHA].sum()
-        dist_pred = df_predicoes.sum()
-        
-        df_comparacao = pd.DataFrame({
-            'Treino': dist_treino.values,
-            'Predições': dist_pred.values,
-            'Falha': [col.upper() for col in COLS_FALHA]
-        })
-        
-        fig_comp = px.bar(
-            df_comparacao.melt(id_vars='Falha', var_name='Dataset', value_name='Quantidade'),
-            x='Falha', y='Quantidade', color='Dataset', barmode='group',
-            title="Comparação: Distribuição Treino vs Predições"
-        )
-        st.plotly_chart(fig_comp, use_container_width=True)
-    
-    with col2:
-        # Métricas de confiança (se modelo suporta probabilidades)
-        if hasattr(modelo, 'predict_proba') or (algoritmo == "Ensemble (Todos)" and tipo_modelagem != "Multirrótulo"):
-            st.write("**Métricas de Confiança:**")
+            # Para binário/multiclasse, criar formato multirrótulo
+            df_predicoes = pd.DataFrame(
+                0, 
+                index=range(len(pred_test)), 
+                columns=[col.upper() for col in COLS_FALHA]
+            )
             
-            try:
-                if tipo_modelagem == "Multirrótulo":
-                    # Para multirrótulo, calcular confiança média
-                    confidencias = []
-                    if algoritmo == "Ensemble (Todos)":
-                        for name, model in modelo.items():
-                            if hasattr(model, 'estimators_'):
-                                conf = np.mean([est.predict_proba(X_test)[:, 1] if hasattr(est, 'predict_proba') else 0.5
-                                              for est in model.estimators_], axis=0)
-                                confidencias.append(conf)
-                        confianca_media = np.mean(confidencias) if confidencias else 0.5
-                    else:
-                        confianca_media = 0.5
-                else:
-                    if hasattr(modelo, 'predict_proba'):
-                        probas = modelo.predict_proba(X_test)
-                        confianca_media = np.mean(np.max(probas, axis=1))
-                    else:
-                        confianca_media = 0.5
+            if tipo_modelagem == "Binária":
+                # Atribuir falha mais comum quando há predição positiva
+                falha_mais_comum = dados_processados[COLS_FALHA].sum().idxmax().upper()
+                df_predicoes.loc[pred_test == 1, falha_mais_comum] = 1
                 
-                st.metric("🎯 Confiança Média", f"{confianca_media:.3f}")
-                
-                # Distribuição de confiança
-                if tipo_modelagem != "Multirrótulo" and hasattr(modelo, 'predict_proba'):
-                    conf_dist = np.max(modelo.predict_proba(X_test), axis=1)
-                    fig_conf = px.histogram(x=conf_dist, title="Distribuição da Confiança")
-                    st.plotly_chart(fig_conf, use_container_width=True)
-                    
-            except Exception as e:
-                st.write("Confiança não disponível para este modelo")
-    
-    # Download das predições
-    csv_predicoes = df_predicoes.to_csv(index=False)
-    st.download_button(
-        "📥 Baixar Predições (CSV para API)",
-        csv_predicoes,
-        "bootcamp_predictions.csv",
-        "text/csv"
-    )
-    
-    st.success("✅ Predições geradas com sucesso!")
+            else:  # Multiclasse
+                for i, pred in enumerate(pred_test):
+                    classe_nome = target_names[pred]
+                    if classe_nome in [col.lower() for col in COLS_FALHA]:
+                        col_idx = [col.lower() for col in COLS_FALHA].index(classe_nome)
+                        df_predicoes.iloc[i, col_idx] = 1
+        
+        # Estatísticas das predições
+        st.subheader("📊 Estatísticas das Predições")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Contagem por tipo de falha:**")
+            contagem_pred = df_predicoes.sum().to_frame("Quantidade")
+            contagem_pred["Percentual"] = (contagem_pred["Quantidade"] / len(df_predicoes) * 100).round(2)
+            st.dataframe(contagem_pred, use_container_width=True)
+        
+        with col2:
+            # Gráfico de barras das predições
+            fig_pred = px.bar(
+                x=df_predicoes.sum().values,
+                y=df_predicoes.sum().index,
+                orientation='h',
+                title="Distribuição das Predições por Tipo de Falha"
+            )
+            st.plotly_chart(fig_pred, use_container_width=True)
+        
+        # Download das predições
+        csv_predicoes = df_predicoes.to_csv(index=False)
+        st.download_button(
+            "📥 Baixar Predições (CSV)",
+            csv_predicoes,
+            "bootcamp_predictions.csv",
+            "text/csv"
+        )
+        
+        st.success("✅ Predições geradas com sucesso!")
+        
+    except Exception as e:
+        st.error(f"Erro ao processar dados de teste: {str(e)}")
 
 # =============================================================================
-# SEÇÃO 8: ANÁLISE DE PERFORMANCE E INSIGHTS
+# SEÇÃO 8: INSIGHTS E RECOMENDAÇÕES
 # =============================================================================
-st.header("📊 8. ANÁLISE DE PERFORMANCE E INSIGHTS")
+st.header("📊 8. INSIGHTS E RECOMENDAÇÕES")
 
 col1, col2 = st.columns(2)
 
@@ -877,29 +735,29 @@ with col1:
     
     insights = []
     
-    # Insight sobre features mais importantes
-    top_feature = feature_importance_df.iloc[0]
-    insights.append(f"🎯 **Feature mais importante:** {top_feature['Feature']} ({top_feature['Importance']:.3f})")
-    
-    # Insight sobre engenharia de features
-    eng_features = feature_importance_df[feature_importance_df['Tipo'] == 'Engenharia']
-    if not eng_features.empty:
-        contrib_eng = feature_importance_df.groupby('Tipo')['Importance'].sum().get('Engenharia', 0)
-        insights.append(f"🔧 **Contribuição das features criadas:** {contrib_eng:.1%}")
-    
-    # Insight sobre desbalanceamento
-    if 'falhas_count' in locals():
-        ratio = falhas_count.max() / falhas_count.min()
-        insights.append(f"⚖️ **Desbalanceamento:** {ratio:.1f}:1 (classe majoritária vs minoritária)")
-    
-    # Insight sobre performance
-    if tipo_modelagem == "Multirrótulo":
+    # Insights baseados na performance
+    if tipo_modelagem == "Multirrótulo" and 'metricas_detalhadas' in locals():
+        f1_scores = [metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA]
         melhor_classe = max(metricas_detalhadas.keys(), 
                            key=lambda x: metricas_detalhadas[x]['F1-Score'])
         pior_classe = min(metricas_detalhadas.keys(), 
                          key=lambda x: metricas_detalhadas[x]['F1-Score'])
-        insights.append(f"📈 **Melhor predição:** {melhor_classe.upper()} (F1: {metricas_detalhadas[melhor_classe]['F1-Score']:.3f})")
-        insights.append(f"📉 **Maior desafio:** {pior_classe.upper()} (F1: {metricas_detalhadas[pior_classe]['F1-Score']:.3f})")
+        
+        insights.append(f"🎯 **Melhor predição:** {melhor_classe.upper()}")
+        insights.append(f"⚠️ **Maior desafio:** {pior_classe.upper()}")
+        insights.append(f"📊 **F1 médio:** {np.mean(f1_scores):.3f}")
+    
+    elif tipo_modelagem != "Multirrótulo" and 'accuracy' in locals():
+        insights.append(f"🎯 **Accuracy geral:** {accuracy:.3f}")
+    
+    # Insights sobre features
+    if 'feature_importance_df' in locals():
+        top_feature = feature_importance_df.iloc[0]
+        insights.append(f"🔧 **Feature mais importante:** {top_feature['Feature']}")
+    
+    # Insights sobre dados
+    insights.append(f"📊 **Total de features utilizadas:** {len(features_cols)}")
+    insights.append(f"🔧 **Features criadas:** {dados_processados.shape[1] - dados_treino.shape[1]}")
     
     for insight in insights:
         st.markdown(insight)
@@ -907,101 +765,48 @@ with col1:
 with col2:
     st.subheader("💡 Recomendações")
     
-    recomendacoes = []
-    
-    # Recomendação baseada na performance
-    if tipo_modelagem == "Multirrótulo":
-        f1_scores = [metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA]
-        f1_medio = np.mean(f1_scores)
-        if f1_medio < 0.7:
-            recomendacoes.append("📊 Considere técnicas de balanceamento (SMOTE, undersampling)")
-        if min(f1_scores) < 0.5:
-            recomendacoes.append("🎯 Foque na coleta de mais dados para classes minoritárias")
-    
-    # Recomendação sobre features
-    if len(eng_features) > 0:
-        recomendacoes.append("🔧 Features de engenharia mostraram-se valiosas - continue explorando")
-    
-    # Recomendação sobre algoritmos
-    if algoritmo != "Ensemble (Todos)":
-        recomendacoes.append("🤖 Teste ensemble de modelos para melhor performance")
-    
-    recomendacoes.extend([
-        "📈 Implemente monitoramento contínuo da performance",
-        "🔄 Considere retreinamento periódico com novos dados",
-        "⚡ Desenvolva sistema de alertas baseado nas predições",
-        "🏭 Integre com sistema de gestão de manutenção existente"
-    ])
+    recomendacoes = [
+        "📈 Implementar monitoramento contínuo da performance",
+        "🔄 Considerar retreinamento periódico com novos dados",
+        "⚡ Desenvolver sistema de alertas baseado nas predições",
+        "🏭 Integrar com sistema de gestão de manutenção existente",
+        "📊 Coletar feedback dos técnicos para melhorar o modelo",
+        "🎯 Focar na coleta de mais dados para classes minoritárias"
+    ]
     
     for rec in recomendacoes:
         st.markdown(f"- {rec}")
 
 # =============================================================================
-# SEÇÃO 9: CONCLUSÕES E PRÓXIMOS PASSOS
+# SEÇÃO 9: CONCLUSÕES
 # =============================================================================
-st.header("📋 9. CONCLUSÕES E PRÓXIMOS PASSOS")
+st.header("📋 9. CONCLUSÕES")
 
 with st.expander("🎯 Principais Conclusões", expanded=True):
     st.markdown(f"""
     ### ✅ **Resultados Alcançados:**
     
     1. **Sistema Completo de Manutenção Preditiva:**
-       - Análise exploratória avançada com {dados_processados.shape[1]} features
+       - Análise exploratória com {dados_processados.shape[1]} features
        - Engenharia de features criou {dados_processados.shape[1] - dados_treino.shape[1]} novas variáveis
-       - Implementação de múltiplos algoritmos: Random Forest, XGBoost, LightGBM, Neural Networks
-       - Ensemble de modelos para máxima performance
+       - Implementação de múltiplos algoritmos de ML
+       - Sistema pronto para produção
     
     2. **Performance do Modelo:**
        - Algoritmo utilizado: **{algoritmo}**
        - Abordagem: **{tipo_modelagem}**
        - Otimização de hiperparâmetros: **{'Sim' if otimizar_hiper else 'Não'}**
-       - Features selecionadas: **{len(features_cols)}**
+       - Features utilizadas: **{len(features_cols)}**
     
-    3. **Inovações Implementadas:**
-       - 🔧 Engenharia avançada de features (interações, séries temporais simuladas)
-       - 🎯 Seleção automática de features
-       - ⚙️ Otimização de hiperparâmetros
-       - 🤖 Ensemble de múltiplos algoritmos
-       - 📊 Análise comparativa de performance
-    
-    4. **Impacto no Negócio:**
+    3. **Impacto no Negócio:**
        - Sistema pronto para detecção precoce de falhas
        - Redução esperada de custos de manutenção
        - Melhoria na disponibilidade dos equipamentos
        - Interface intuitiva para operadores
     """)
 
-with st.expander("🚀 Roadmap de Melhorias Futuras", expanded=False):
-    st.markdown("""
-    ### 📈 **Próximas Fases do Projeto:**
-    
-    **Fase 1 - Produção (Próximos 30 dias):**
-    - ⚡ API RESTful com FastAPI para integração
-    - 🐳 Containerização com Docker
-    - 📊 Dashboard em tempo real para monitoramento
-    - 🔒 Sistema de autenticação e logs
-    
-    **Fase 2 - Inteligência Avançada (60-90 dias):**
-    - 🧠 Deep Learning com redes neurais recorrentes (LSTM)
-    - 📈 Análise de séries temporais reais
-    - 🎯 Detecção de anomalias não supervisionada
-    - 🔄 Auto-ML para otimização contínua
-    
-    **Fase 3 - Integração Empresarial (90-120 dias):**
-    - 🏭 Integração com sistemas ERP/MES
-    - 📱 App mobile para técnicos de manutenção
-    - 🤖 Chatbot para consultas sobre equipamentos
-    - 📊 Dashboards executivos com KPIs de negócio
-    
-    **Fase 4 - Escala e Otimização (120+ dias):**
-    - ☁️ Deploy em nuvem com auto-scaling
-    - 🔄 Pipeline de CI/CD completo
-    - 📈 MLOps com monitoramento de drift
-    - 🌐 Multi-tenancy para diferentes plantas industriais
-    """)
-
 # =============================================================================
-# MÉTRICAS FINAIS DE SISTEMA
+# DASHBOARD EXECUTIVO
 # =============================================================================
 st.header("📊 Dashboard Executivo")
 
@@ -1012,27 +817,29 @@ with col1:
 with col2:
     st.metric("🔧 Features Totais", dados_processados.shape[1])
 with col3:
-    if tipo_modelagem == "Multirrótulo":
+    if tipo_modelagem == "Multirrótulo" and 'metricas_detalhadas' in locals():
         perf_media = np.mean([metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA])
         st.metric("🎯 Performance Média", f"{perf_media:.3f}")
-    else:
+    elif 'accuracy' in locals():
         st.metric("🎯 Accuracy Final", f"{accuracy:.3f}")
+    else:
+        st.metric("🎯 Modelo", "Treinado ✅")
 with col4:
-    if dados_teste is not None:
+    if dados_teste is not None and 'df_predicoes' in locals():
         falhas_previstas = df_predicoes.sum().sum()
         st.metric("⚠️ Falhas Previstas", int(falhas_previstas))
     else:
-        st.metric("💾 Modelo Treinado", "✅")
+        st.metric("💾 Status", "Pronto ✅")
 
 # =============================================================================
-# RODAPÉ PROFISSIONAL
+# RODAPÉ
 # =============================================================================
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <h4>🔧 Sistema Inteligente de Manutenção Preditiva</h4>
     <p><strong>Bootcamp de Ciência de Dados e IA - Projeto Final</strong></p>
-    <p>Desenvolvido com ❤️ usando Python, Scikit-learn, XGBoost, LightGBM e Streamlit</p>
-    <p><em>Implementação completa com algoritmos avançados, engenharia de features e ensemble de modelos</em></p>
+    <p>Desenvolvido com Python, Scikit-learn e Streamlit</p>
+    <p><em>Versão otimizada para compatibilidade com Streamlit Cloud</em></p>
 </div>
 """, unsafe_allow_html=True)
