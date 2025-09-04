@@ -608,4 +608,431 @@ if tipo_modelagem == "Multirrótulo":
 else:
     # Modelo binário ou multiclasse
     accuracy = accuracy_score(y_val, y_pred)
-    precision, recall, f1, _ = precision_recall_
+    precision, recall, f1, _ = precision_recall_fscore_support(
+        y_val, y_pred, average='weighted', zero_division=0
+    )
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("🎯 Accuracy", f"{accuracy:.4f}")
+    with col2:
+        st.metric("🔍 Precision", f"{precision:.4f}")
+    with col3:
+        st.metric("📊 Recall", f"{recall:.4f}")
+    with col4:
+        st.metric("⚖️ F1-Score", f"{f1:.4f}")
+    
+    # Relatório de classificação
+    st.subheader("📋 Relatório Detalhado de Classificação")
+    
+    report = classification_report(y_val, y_pred, output_dict=True, zero_division=0)
+    df_report = pd.DataFrame(report).transpose()
+    st.dataframe(df_report.round(4), use_container_width=True)
+    
+    # Matriz de confusão
+    st.subheader("🔍 Matriz de Confusão")
+    
+    cm = confusion_matrix(y_val, y_pred)
+    fig_cm = px.imshow(
+        cm, 
+        text_auto=True, 
+        aspect="auto", 
+        title="Matriz de Confusão",
+        color_continuous_scale="Blues"
+    )
+    fig_cm.update_xaxes(title="Predito")
+    fig_cm.update_yaxes(title="Real")
+    st.plotly_chart(fig_cm, use_container_width=True)
+
+# Feature Importance Avançada
+st.subheader("🎯 Análise de Importância das Features")
+
+if algoritmo == "Ensemble (Todos)" and tipo_modelagem != "Multirrótulo":
+    # Para ensemble não-multirrótulo
+    if hasattr(modelo, 'feature_importances_'):
+        importances = modelo.feature_importances_
+    else:
+        # Média das importâncias dos estimadores
+        importances = np.mean([est.feature_importances_ for name, est in modelo.named_estimators_.items() 
+                              if hasattr(est, 'feature_importances_')], axis=0)
+        
+elif algoritmo == "Ensemble (Todos)" and tipo_modelagem == "Multirrótulo":
+    # Para ensemble multirrótulo, usar Random Forest como referência
+    if 'rf' in modelo and hasattr(modelo['rf'], 'estimators_'):
+        importances = np.mean([est.feature_importances_ for est in modelo['rf'].estimators_], axis=0)
+    else:
+        importances = np.ones(len(features_cols)) / len(features_cols)  # Uniforme se não disponível
+        
+elif hasattr(modelo, 'feature_importances_'):
+    importances = modelo.feature_importances_
+elif tipo_modelagem == "Multirrótulo" and hasattr(modelo, 'estimators_'):
+    # Para MultiOutputClassifier
+    importances = np.mean([est.feature_importances_ for est in modelo.estimators_ 
+                          if hasattr(est, 'feature_importances_')], axis=0)
+else:
+    importances = np.ones(len(features_cols)) / len(features_cols)  # Uniforme se não disponível
+
+feature_importance_df = pd.DataFrame({
+    'Feature': features_cols,
+    'Importance': importances
+}).sort_values('Importance', ascending=False)
+
+# Mostrar top features
+col1, col2 = st.columns(2)
+
+with col1:
+    fig_importance = px.bar(
+        feature_importance_df.head(15), 
+        x='Importance', 
+        y='Feature',
+        orientation='h',
+        title="Top 15 Features Mais Importantes"
+    )
+    fig_importance.update_layout(height=500)
+    st.plotly_chart(fig_importance, use_container_width=True)
+
+with col2:
+    # Análise das features criadas vs originais
+    feature_importance_df['Tipo'] = feature_importance_df['Feature'].apply(
+        lambda x: 'Engenharia' if any(keyword in x for keyword in 
+                                    ['interacao', 'media_movel', 'desvio_movel', 'tendencia', 
+                                     'potencia', 'eficiencia', 'dif_', 'razao_']) 
+                               else 'Original'
+    )
+    
+    tipo_importancia = feature_importance_df.groupby('Tipo')['Importance'].sum()
+    
+    fig_pie = px.pie(
+        values=tipo_importancia.values,
+        names=tipo_importancia.index,
+        title="Contribuição: Features Originais vs Criadas"
+    )
+    st.plotly_chart(fig_pie, use_container_width=True)
+
+# =============================================================================
+# SEÇÃO 7: PREDIÇÕES NO CONJUNTO DE TESTE
+# =============================================================================
+if dados_teste is not None:
+    st.header("🎯 7. PREDIÇÕES NO CONJUNTO DE TESTE")
+    
+    # Processar dados de teste
+    dados_teste_proc = criar_features_avancadas(dados_teste)
+    
+    if "tipo" in dados_teste_proc.columns and 'le_tipo' in locals():
+        dados_teste_proc["tipo_encoded"] = le_tipo.transform(
+            dados_teste_proc["tipo"].fillna("Unknown")
+        )
+    
+    # Preparar X_test com as mesmas features
+    X_test = dados_teste_proc[features_cols].copy()
+    X_test = X_test.fillna(X_test.median())
+    
+    if scaler is not None:
+        X_test = pd.DataFrame(
+            scaler.transform(X_test), 
+            columns=X_test.columns, 
+            index=X_test.index
+        )
+    
+    # Gerar predições
+    if tipo_modelagem == "Multirrótulo":
+        if algoritmo == "Ensemble (Todos)":
+            # Média das predições do ensemble
+            predicoes_teste = {}
+            for name, model in modelo.items():
+                predicoes_teste[name] = model.predict(X_test)
+            
+            pred_test = np.round(np.mean([pred for pred in predicoes_teste.values()], axis=0)).astype(int)
+        else:
+            pred_test = modelo.predict(X_test)
+        
+        # Criar DataFrame de saída
+        df_predicoes = pd.DataFrame(
+            pred_test, 
+            columns=[col.upper() for col in COLS_FALHA]
+        ).astype(int)
+        
+    else:
+        pred_test = modelo.predict(X_test)
+        
+        # Para binário/multiclasse, criar formato multirrótulo
+        df_predicoes = pd.DataFrame(
+            0, 
+            index=range(len(pred_test)), 
+            columns=[col.upper() for col in COLS_FALHA]
+        )
+        
+        if tipo_modelagem == "Binária":
+            # Atribuir falha mais comum quando há predição positiva
+            falha_mais_comum = dados_processados[COLS_FALHA].sum().idxmax().upper()
+            df_predicoes.loc[pred_test == 1, falha_mais_comum] = 1
+            
+        else:  # Multiclasse
+            for i, pred in enumerate(pred_test):
+                classe_nome = target_names[pred]
+                if classe_nome in [col.lower() for col in COLS_FALHA]:
+                    col_idx = [col.lower() for col in COLS_FALHA].index(classe_nome)
+                    df_predicoes.iloc[i, col_idx] = 1
+    
+    # Estatísticas das predições
+    st.subheader("📊 Estatísticas das Predições")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.write("**Contagem por tipo de falha:**")
+        contagem_pred = df_predicoes.sum().to_frame("Quantidade")
+        contagem_pred["Percentual"] = (contagem_pred["Quantidade"] / len(df_predicoes) * 100).round(2)
+        st.dataframe(contagem_pred, use_container_width=True)
+    
+    with col2:
+        # Gráfico de barras das predições
+        fig_pred = px.bar(
+            x=df_predicoes.sum().values,
+            y=df_predicoes.sum().index,
+            orientation='h',
+            title="Distribuição das Predições por Tipo de Falha"
+        )
+        st.plotly_chart(fig_pred, use_container_width=True)
+    
+    # Análise comparativa (se tivermos dados históricos)
+    st.subheader("📈 Análise Comparativa")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Comparar distribuição treino vs predições
+        dist_treino = dados_processados[COLS_FALHA].sum()
+        dist_pred = df_predicoes.sum()
+        
+        df_comparacao = pd.DataFrame({
+            'Treino': dist_treino.values,
+            'Predições': dist_pred.values,
+            'Falha': [col.upper() for col in COLS_FALHA]
+        })
+        
+        fig_comp = px.bar(
+            df_comparacao.melt(id_vars='Falha', var_name='Dataset', value_name='Quantidade'),
+            x='Falha', y='Quantidade', color='Dataset', barmode='group',
+            title="Comparação: Distribuição Treino vs Predições"
+        )
+        st.plotly_chart(fig_comp, use_container_width=True)
+    
+    with col2:
+        # Métricas de confiança (se modelo suporta probabilidades)
+        if hasattr(modelo, 'predict_proba') or (algoritmo == "Ensemble (Todos)" and tipo_modelagem != "Multirrótulo"):
+            st.write("**Métricas de Confiança:**")
+            
+            try:
+                if tipo_modelagem == "Multirrótulo":
+                    # Para multirrótulo, calcular confiança média
+                    confidencias = []
+                    if algoritmo == "Ensemble (Todos)":
+                        for name, model in modelo.items():
+                            if hasattr(model, 'estimators_'):
+                                conf = np.mean([est.predict_proba(X_test)[:, 1] if hasattr(est, 'predict_proba') else 0.5
+                                              for est in model.estimators_], axis=0)
+                                confidencias.append(conf)
+                        confianca_media = np.mean(confidencias) if confidencias else 0.5
+                    else:
+                        confianca_media = 0.5
+                else:
+                    if hasattr(modelo, 'predict_proba'):
+                        probas = modelo.predict_proba(X_test)
+                        confianca_media = np.mean(np.max(probas, axis=1))
+                    else:
+                        confianca_media = 0.5
+                
+                st.metric("🎯 Confiança Média", f"{confianca_media:.3f}")
+                
+                # Distribuição de confiança
+                if tipo_modelagem != "Multirrótulo" and hasattr(modelo, 'predict_proba'):
+                    conf_dist = np.max(modelo.predict_proba(X_test), axis=1)
+                    fig_conf = px.histogram(x=conf_dist, title="Distribuição da Confiança")
+                    st.plotly_chart(fig_conf, use_container_width=True)
+                    
+            except Exception as e:
+                st.write("Confiança não disponível para este modelo")
+    
+    # Download das predições
+    csv_predicoes = df_predicoes.to_csv(index=False)
+    st.download_button(
+        "📥 Baixar Predições (CSV para API)",
+        csv_predicoes,
+        "bootcamp_predictions.csv",
+        "text/csv"
+    )
+    
+    st.success("✅ Predições geradas com sucesso!")
+
+# =============================================================================
+# SEÇÃO 8: ANÁLISE DE PERFORMANCE E INSIGHTS
+# =============================================================================
+st.header("📊 8. ANÁLISE DE PERFORMANCE E INSIGHTS")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("🔍 Insights do Modelo")
+    
+    insights = []
+    
+    # Insight sobre features mais importantes
+    top_feature = feature_importance_df.iloc[0]
+    insights.append(f"🎯 **Feature mais importante:** {top_feature['Feature']} ({top_feature['Importance']:.3f})")
+    
+    # Insight sobre engenharia de features
+    eng_features = feature_importance_df[feature_importance_df['Tipo'] == 'Engenharia']
+    if not eng_features.empty:
+        contrib_eng = feature_importance_df.groupby('Tipo')['Importance'].sum().get('Engenharia', 0)
+        insights.append(f"🔧 **Contribuição das features criadas:** {contrib_eng:.1%}")
+    
+    # Insight sobre desbalanceamento
+    if 'falhas_count' in locals():
+        ratio = falhas_count.max() / falhas_count.min()
+        insights.append(f"⚖️ **Desbalanceamento:** {ratio:.1f}:1 (classe majoritária vs minoritária)")
+    
+    # Insight sobre performance
+    if tipo_modelagem == "Multirrótulo":
+        melhor_classe = max(metricas_detalhadas.keys(), 
+                           key=lambda x: metricas_detalhadas[x]['F1-Score'])
+        pior_classe = min(metricas_detalhadas.keys(), 
+                         key=lambda x: metricas_detalhadas[x]['F1-Score'])
+        insights.append(f"📈 **Melhor predição:** {melhor_classe.upper()} (F1: {metricas_detalhadas[melhor_classe]['F1-Score']:.3f})")
+        insights.append(f"📉 **Maior desafio:** {pior_classe.upper()} (F1: {metricas_detalhadas[pior_classe]['F1-Score']:.3f})")
+    
+    for insight in insights:
+        st.markdown(insight)
+
+with col2:
+    st.subheader("💡 Recomendações")
+    
+    recomendacoes = []
+    
+    # Recomendação baseada na performance
+    if tipo_modelagem == "Multirrótulo":
+        f1_scores = [metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA]
+        f1_medio = np.mean(f1_scores)
+        if f1_medio < 0.7:
+            recomendacoes.append("📊 Considere técnicas de balanceamento (SMOTE, undersampling)")
+        if min(f1_scores) < 0.5:
+            recomendacoes.append("🎯 Foque na coleta de mais dados para classes minoritárias")
+    
+    # Recomendação sobre features
+    if len(eng_features) > 0:
+        recomendacoes.append("🔧 Features de engenharia mostraram-se valiosas - continue explorando")
+    
+    # Recomendação sobre algoritmos
+    if algoritmo != "Ensemble (Todos)":
+        recomendacoes.append("🤖 Teste ensemble de modelos para melhor performance")
+    
+    recomendacoes.extend([
+        "📈 Implemente monitoramento contínuo da performance",
+        "🔄 Considere retreinamento periódico com novos dados",
+        "⚡ Desenvolva sistema de alertas baseado nas predições",
+        "🏭 Integre com sistema de gestão de manutenção existente"
+    ])
+    
+    for rec in recomendacoes:
+        st.markdown(f"- {rec}")
+
+# =============================================================================
+# SEÇÃO 9: CONCLUSÕES E PRÓXIMOS PASSOS
+# =============================================================================
+st.header("📋 9. CONCLUSÕES E PRÓXIMOS PASSOS")
+
+with st.expander("🎯 Principais Conclusões", expanded=True):
+    st.markdown(f"""
+    ### ✅ **Resultados Alcançados:**
+    
+    1. **Sistema Completo de Manutenção Preditiva:**
+       - Análise exploratória avançada com {dados_processados.shape[1]} features
+       - Engenharia de features criou {dados_processados.shape[1] - dados_treino.shape[1]} novas variáveis
+       - Implementação de múltiplos algoritmos: Random Forest, XGBoost, LightGBM, Neural Networks
+       - Ensemble de modelos para máxima performance
+    
+    2. **Performance do Modelo:**
+       - Algoritmo utilizado: **{algoritmo}**
+       - Abordagem: **{tipo_modelagem}**
+       - Otimização de hiperparâmetros: **{'Sim' if otimizar_hiper else 'Não'}**
+       - Features selecionadas: **{len(features_cols)}**
+    
+    3. **Inovações Implementadas:**
+       - 🔧 Engenharia avançada de features (interações, séries temporais simuladas)
+       - 🎯 Seleção automática de features
+       - ⚙️ Otimização de hiperparâmetros
+       - 🤖 Ensemble de múltiplos algoritmos
+       - 📊 Análise comparativa de performance
+    
+    4. **Impacto no Negócio:**
+       - Sistema pronto para detecção precoce de falhas
+       - Redução esperada de custos de manutenção
+       - Melhoria na disponibilidade dos equipamentos
+       - Interface intuitiva para operadores
+    """)
+
+with st.expander("🚀 Roadmap de Melhorias Futuras", expanded=False):
+    st.markdown("""
+    ### 📈 **Próximas Fases do Projeto:**
+    
+    **Fase 1 - Produção (Próximos 30 dias):**
+    - ⚡ API RESTful com FastAPI para integração
+    - 🐳 Containerização com Docker
+    - 📊 Dashboard em tempo real para monitoramento
+    - 🔒 Sistema de autenticação e logs
+    
+    **Fase 2 - Inteligência Avançada (60-90 dias):**
+    - 🧠 Deep Learning com redes neurais recorrentes (LSTM)
+    - 📈 Análise de séries temporais reais
+    - 🎯 Detecção de anomalias não supervisionada
+    - 🔄 Auto-ML para otimização contínua
+    
+    **Fase 3 - Integração Empresarial (90-120 dias):**
+    - 🏭 Integração com sistemas ERP/MES
+    - 📱 App mobile para técnicos de manutenção
+    - 🤖 Chatbot para consultas sobre equipamentos
+    - 📊 Dashboards executivos com KPIs de negócio
+    
+    **Fase 4 - Escala e Otimização (120+ dias):**
+    - ☁️ Deploy em nuvem com auto-scaling
+    - 🔄 Pipeline de CI/CD completo
+    - 📈 MLOps com monitoramento de drift
+    - 🌐 Multi-tenancy para diferentes plantas industriais
+    """)
+
+# =============================================================================
+# MÉTRICAS FINAIS DE SISTEMA
+# =============================================================================
+st.header("📊 Dashboard Executivo")
+
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("📊 Amostras Processadas", f"{dados_processados.shape[0]:,}")
+with col2:
+    st.metric("🔧 Features Totais", dados_processados.shape[1])
+with col3:
+    if tipo_modelagem == "Multirrótulo":
+        perf_media = np.mean([metricas_detalhadas[col]['F1-Score'] for col in COLS_FALHA])
+        st.metric("🎯 Performance Média", f"{perf_media:.3f}")
+    else:
+        st.metric("🎯 Accuracy Final", f"{accuracy:.3f}")
+with col4:
+    if dados_teste is not None:
+        falhas_previstas = df_predicoes.sum().sum()
+        st.metric("⚠️ Falhas Previstas", int(falhas_previstas))
+    else:
+        st.metric("💾 Modelo Treinado", "✅")
+
+# =============================================================================
+# RODAPÉ PROFISSIONAL
+# =============================================================================
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 20px;'>
+    <h4>🔧 Sistema Inteligente de Manutenção Preditiva</h4>
+    <p><strong>Bootcamp de Ciência de Dados e IA - Projeto Final</strong></p>
+    <p>Desenvolvido com ❤️ usando Python, Scikit-learn, XGBoost, LightGBM e Streamlit</p>
+    <p><em>Implementação completa com algoritmos avançados, engenharia de features e ensemble de modelos</em></p>
+</div>
+""", unsafe_allow_html=True)
