@@ -25,25 +25,35 @@ def preprocessar_dados(treino, teste):
     """Pré-processa os dados: normalização e codificação."""
 
     # Detectar coluna alvo automaticamente
-    possiveis_alvos = ["target", "label", "classe", "y", "falha"]
+    possiveis_alvos = ["target", "label", "classe", "y", "falha", "fa (falha aleatoria)"]
     coluna_alvo = None
 
     for col in treino.columns:
-        if col.lower() in possiveis_alvos:
+        if col.lower() in [c.lower() for c in possiveis_alvos]:
             coluna_alvo = col
             break
 
     if not coluna_alvo:
-        # Caso nenhuma coluna conhecida seja encontrada, usa a última
         coluna_alvo = treino.columns[-1]
         st.warning(f"⚠️ Coluna alvo não encontrada explicitamente. Usando '{coluna_alvo}' como target.")
 
-    # Separar X e y
-    X_train = treino.drop(coluna_alvo, axis=1)
-    y_train = treino[coluna_alvo]
+    # Se a coluna alvo não existir no teste, ignoramos
+    if coluna_alvo not in teste.columns:
+        st.warning(f"⚠️ Coluna alvo '{coluna_alvo}' não encontrada no arquivo de teste. Apenas treino será usado para X/y.")
+        X_test = teste.copy()
+        y_test = None
+    else:
+        y_test = teste[coluna_alvo]
+        X_test = teste.drop(coluna_alvo, axis=1)
 
-    X_test = teste.drop(coluna_alvo, axis=1)
-    y_test = teste[coluna_alvo]
+    # Separar X e y do treino
+    y_train = treino[coluna_alvo]
+    X_train = treino.drop(coluna_alvo, axis=1)
+
+    # Garantir que as colunas de treino e teste sejam compatíveis
+    colunas_comuns = [col for col in X_train.columns if col in X_test.columns]
+    X_train = X_train[colunas_comuns]
+    X_test = X_test[colunas_comuns]
 
     # Normalização
     scaler = StandardScaler()
@@ -54,7 +64,8 @@ def preprocessar_dados(treino, teste):
     if y_train.dtype == "object":
         encoder = LabelEncoder()
         y_train = encoder.fit_transform(y_train)
-        y_test = encoder.transform(y_test)
+        if y_test is not None:
+            y_test = encoder.transform(y_test)
 
     return X_train, X_test, y_train, y_test
 
