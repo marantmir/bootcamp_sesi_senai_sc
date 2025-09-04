@@ -1,4 +1,3 @@
-# app.py
 """
 Sistema de Manutenção Preditiva
 --------------------------------
@@ -73,3 +72,4 @@ if arquivo_treino:
         st.error("❌ Ocorreu um erro no processamento.")
         st.code(tb)
         print(tb, file=sys.stderr)
+
