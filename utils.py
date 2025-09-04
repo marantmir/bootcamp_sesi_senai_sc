@@ -1,113 +1,143 @@
-import pandas as pd
+# utils.py
+import re
+import unicodedata
+from typing import Optional, Tuple, List
+
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-import streamlit as st
-from sklearn.model_selection import train_test_split
+import pandas as pd
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.ensemble import RandomForestClassifier
-from lightgbm import LGBMClassifier
-from xgboost import XGBClassifier
 
-# =====================
-# FUNÇÕES DE SUPORTE
-# =====================
+def _normalize_col_name(col: str) -> str:
+    """Normaliza nomes de colunas: strip, lower, remove acentos, substitui não-alphanum por '_'."""
+    if col is None:
+        return ""
+    s = str(col).strip().lower()
+    s = unicodedata.normalize("NFKD", s)
+    s = s.encode("ascii", errors="ignore").decode("utf-8")
+    s = re.sub(r"[^\w]+", "_", s)          # tudo que não for letra/dígito/_ -> _
+    s = re.sub(r"__+", "_", s)             # colapsa underscores duplos
+    s = s.strip("_")
+    return s
 
-def carregar_dados(arquivo_treino, arquivo_teste):
-    """Carrega os dados de treino e teste a partir de arquivos CSV."""
-    treino = pd.read_csv(arquivo_treino)
-    teste = pd.read_csv(arquivo_teste)
-    return treino, teste
+def preprocessar_dados(
+    treino: pd.DataFrame,
+    teste: Optional[pd.DataFrame] = None,
+    possiveis_alvos: Optional[List[str]] = None,
+    verbose: bool = True
+) -> Tuple[pd.DataFrame, pd.DataFrame, np.ndarray, Optional[np.ndarray], StandardScaler, List[str]]:
+    """
+    Pré-processa treino e teste de forma robusta:
+    - normaliza nomes de colunas
+    - detecta coluna alvo (com fallback)
+    - alinha features entre treino/teste (get_dummies em concat)
+    - imputação por mediana (usando apenas treino)
+    - StandardScaler (fit no treino)
+    - label encoding seguro para y
+    Retorna: X_train_df, X_test_df, y_train, y_test (ou None se não existir no teste), scaler, features_cols
+    """
+    # cópias defensivas
+    treino = treino.copy()
+    teste = teste.copy() if teste is not None else pd.DataFrame()
 
+    # normalização das colunas (criar mapping original->normalizado)
+    train_map = {c: _normalize_col_name(c) for c in treino.columns}
+    treino.rename(columns=train_map, inplace=True)
 
-def preprocessar_dados(treino, teste):
-    """Pré-processa os dados: normalização e codificação."""
+    if not teste.empty:
+        test_map = {c: _normalize_col_name(c) for c in teste.columns}
+        teste.rename(columns=test_map, inplace=True)
 
-    # Detectar coluna alvo automaticamente
-    possiveis_alvos = ["target", "label", "classe", "y", "falha", "fa (falha aleatoria)"]
+    if possiveis_alvos is None:
+        possiveis_alvos = ["target", "label", "classe", "y", "falha", "fdf", "fdc", "fp", "fte", "fa"]
+
+    possiveis_alvos_norm = [_normalize_col_name(x) for x in possiveis_alvos]
+
+    # DETECTAR coluna alvo no treino (preferencialmente)
     coluna_alvo = None
-
     for col in treino.columns:
-        if col.lower() in [c.lower() for c in possiveis_alvos]:
+        if col in possiveis_alvos_norm:
             coluna_alvo = col
             break
 
-    if not coluna_alvo:
+    if coluna_alvo is None:
+        # se nada bateu, usar última coluna do treino
         coluna_alvo = treino.columns[-1]
-        st.warning(f"⚠️ Coluna alvo não encontrada explicitamente. Usando '{coluna_alvo}' como target.")
+        if verbose:
+            print(f"[preprocessar_dados] ⚠️ Coluna alvo não encontrada explicitamente. Usando '{coluna_alvo}' (última coluna) como target.")
 
-    # Se a coluna alvo não existir no teste, ignoramos
-    if coluna_alvo not in teste.columns:
-        st.warning(f"⚠️ Coluna alvo '{coluna_alvo}' não encontrada no arquivo de teste. Apenas treino será usado para X/y.")
-        X_test = teste.copy()
-        y_test = None
+    # separar X/y no treino
+    y_train_raw = treino[coluna_alvo]
+    X_train_raw = treino.drop(columns=[coluna_alvo])
+
+    # preparar X_test_raw e y_test_raw (se existir coluna alvo no teste)
+    if not teste.empty and coluna_alvo in teste.columns:
+        y_test_raw = teste[coluna_alvo]
+        X_test_raw = teste.drop(columns=[coluna_alvo])
     else:
-        y_test = teste[coluna_alvo]
-        X_test = teste.drop(coluna_alvo, axis=1)
+        y_test_raw = None
+        X_test_raw = teste if not teste.empty else pd.DataFrame()
 
-    # Separar X e y do treino
-    y_train = treino[coluna_alvo]
-    X_train = treino.drop(coluna_alvo, axis=1)
+    # Alinhar features: concat para dummies consistentes
+    # Se X_test_raw vazio, apenas transforme X_train_raw
+    if X_test_raw.empty:
+        concat = X_train_raw.reset_index(drop=True)
+        split_index = len(X_train_raw)
+    else:
+        concat = pd.concat([X_train_raw.reset_index(drop=True), X_test_raw.reset_index(drop=True)], axis=0, ignore_index=True, sort=False)
+        split_index = len(X_train_raw)
 
-    # Garantir que as colunas de treino e teste sejam compatíveis
-    colunas_comuns = [col for col in X_train.columns if col in X_test.columns]
-    X_train = X_train[colunas_comuns]
-    X_test = X_test[colunas_comuns]
+    # Aplicar get_dummies para categoricas (garante colunas consistentes)
+    concat_d = pd.get_dummies(concat, dummy_na=False)
 
-    # Normalização
+    # split novamente
+    X_train_d = concat_d.iloc[:split_index, :].copy().reset_index(drop=True)
+    X_test_d = concat_d.iloc[split_index:, :].copy().reset_index(drop=True) if split_index < len(concat_d) else pd.DataFrame(columns=concat_d.columns)
+
+    # Imputação: usar mediana do treino
+    medians = X_train_d.median()
+    X_train_d = X_train_d.fillna(medians)
+    if not X_test_d.empty:
+        X_test_d = X_test_d.fillna(medians)
+
+    # Escalonamento
     scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    X_train_scaled = pd.DataFrame(scaler.fit_transform(X_train_d), columns=X_train_d.columns, index=X_train_d.index)
+    if not X_test_d.empty:
+        X_test_scaled = pd.DataFrame(scaler.transform(X_test_d), columns=X_test_d.columns, index=X_test_d.index)
+    else:
+        X_test_scaled = pd.DataFrame(columns=X_train_d.columns)
 
-    # Garantir que rótulos sejam numéricos
-    if y_train.dtype == "object":
-        encoder = LabelEncoder()
-        y_train = encoder.fit_transform(y_train)
-        if y_test is not None:
-            y_test = encoder.transform(y_test)
+    # Label encoding seguro para y
+    y_train_enc = None
+    y_test_enc = None
+    if y_train_raw is not None:
+        # transformar séries para string quando for object, senão manter
+        if pd.api.types.is_object_dtype(y_train_raw) or pd.api.types.is_string_dtype(y_train_raw):
+            encoder = LabelEncoder()
+            y_train_enc = encoder.fit_transform(y_train_raw.astype(str))
+            if y_test_raw is not None:
+                # mapear valores desconhecidos para -1
+                y_test_list = []
+                for v in y_test_raw.astype(str):
+                    try:
+                        y_test_list.append(int(encoder.transform([v])[0]))
+                    except ValueError:
+                        # valor novo no teste — marcar como -1
+                        y_test_list.append(-1)
+                y_test_enc = np.array(y_test_list)
+        else:
+            # já numérico
+            y_train_enc = y_train_raw.values
+            if y_test_raw is not None:
+                y_test_enc = y_test_raw.values
 
-    return X_train, X_test, y_train, y_test
+    # features list
+    features_cols = list(X_train_scaled.columns)
 
-def treinar_modelos(X_train, y_train):
-    """Treina os modelos e retorna os objetos treinados e histórico."""
-    modelos = {
-        "RandomForest": RandomForestClassifier(n_estimators=100, random_state=42),
-        "LightGBM": LGBMClassifier(random_state=42),
-        "XGBoost": XGBClassifier(use_label_encoder=False, eval_metric="mlogloss", random_state=42)
-    }
+    if verbose:
+        print(f"[preprocessar_dados] Shapes -> X_train: {X_train_scaled.shape}, X_test: {X_test_scaled.shape}, y_train: {None if y_train_enc is None else y_train_enc.shape}, y_test: {None if y_test_enc is None else y_test_enc.shape}")
+        print(f"[preprocessar_dados] Coluna alvo detectada (normalizada): '{coluna_alvo}'")
+        if not X_test_scaled.empty:
+            print(f"[preprocessar_dados] Colunas comuns após dummies: {len(features_cols)}")
 
-    historico = {}
-    for nome, modelo in modelos.items():
-        modelo.fit(X_train, y_train)
-        historico[nome] = modelo
-    return modelos, historico
-
-
-def avaliar_modelos(modelos, X_test, y_test):
-    """Avalia os modelos e retorna os resultados de acurácia e relatórios."""
-    resultados = {}
-    for nome, modelo in modelos.items():
-        y_pred = modelo.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        report = classification_report(y_test, y_pred, output_dict=True)
-        matriz = confusion_matrix(y_test, y_pred)
-        resultados[nome] = {"acuracia": acc, "relatorio": report, "matriz": matriz}
-    return resultados
-
-
-def exibir_resultados(resultados, historico):
-    """Exibe os resultados na interface Streamlit."""
-    st.subheader("📊 Resultados dos Modelos")
-    for nome, resultado in resultados.items():
-        st.write(f"### 🔹 {nome}")
-        st.write(f"**Acurácia:** {resultado['acuracia']:.2f}")
-        st.json(resultado["relatorio"])
-
-        # Plot da matriz de confusão
-        fig, ax = plt.subplots()
-        sns.heatmap(resultado["matriz"], annot=True, fmt="d", cmap="Blues", ax=ax)
-        ax.set_title(f"Matriz de Confusão - {nome}")
-        ax.set_xlabel("Previsto")
-        ax.set_ylabel("Real")
-        st.pyplot(fig)
+    return X_train_scaled, X_test_scaled, y_train_enc, y_test_enc, scaler, features_cols
