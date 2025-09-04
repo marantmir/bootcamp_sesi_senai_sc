@@ -22,7 +22,7 @@ if arquivo_treino and arquivo_teste:
     treino, teste = carregar_dados(arquivo_treino, arquivo_teste)
 
     # 2. Pré-processamento
-    X_train, X_test, y_train, y_test = preprocessar_dados(treino, teste)
+    X_train, X_test, y_train, y_test, scaler, features_cols = preprocessar_dados(treino, teste, verbose=True)
 
     # 3. Treinar modelos
     modelos, historico = treinar_modelos(X_train, y_train)
@@ -35,3 +35,4 @@ if arquivo_treino and arquivo_teste:
 
 else:
     st.warning("Por favor, faça o upload dos arquivos de treino e teste.")
+
