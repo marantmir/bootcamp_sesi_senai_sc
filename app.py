@@ -1,10 +1,8 @@
 """
-Sistema de Manutenção Preditiva
---------------------------------
-Interface em Streamlit para carregar dados, pré-processar
-e treinar modelos de machine learning para manutenção preditiva.
-
-Autor: Marco (refatorado com boas práticas)
+🔧 Sistema Inteligente de Manutenção Preditiva
+-----------------------------------------------
+Interface em Streamlit para carregar dados, pré-processar,
+treinar modelos e gerar predições multirrótulo para avaliação.
 """
 
 import streamlit as st
@@ -12,17 +10,16 @@ import traceback
 import sys
 import pandas as pd
 
-from utils import (
-    carregar_e_processar_dados,
-    preprocessar_dados,
-)
+from utils import carregar_e_processar_dados, preprocessar_dados
+from modelos import treinar_modelo, gerar_predicoes
+
 
 # ===============================
 # CONFIGURAÇÃO DO APP
 # ===============================
 st.set_page_config(
     page_title="🔧 Manutenção Preditiva",
-    page_icon="🔧",
+    page_icon="🤖",
     layout="wide"
 )
 
@@ -49,7 +46,7 @@ if arquivo_treino:
         # ===============================
         st.subheader("⚙️ Pré-processamento dos Dados")
 
-        X_train, X_test, y_train, y_test, scaler, features = preprocessar_dados(
+        X_train, X_test, y_train, y_test, scaler, features, targets = preprocessar_dados(
             treino_df,
             teste_df,
             verbose=True
@@ -57,19 +54,37 @@ if arquivo_treino:
 
         st.success("✅ Pré-processamento concluído com sucesso!")
         st.write("**Dimensões:**")
-        st.write(f"Treino: {X_train.shape}, Teste: {X_test.shape if not X_test.empty else 'Não fornecido'}")
+        st.write(f"Treino: {X_train.shape}, Teste: {X_test.shape if X_test is not None else 'Não fornecido'}")
 
         st.write("**Colunas utilizadas no modelo:**")
         st.code(features)
 
         # ===============================
-        # (Aqui você pode integrar modelos ML)
+        # TREINAMENTO DO MODELO
         # ===============================
-        st.info("📌 Agora é possível treinar modelos de ML com os dados pré-processados.")
+        st.subheader("🤖 Treinamento do Modelo")
+        modelo = treinar_modelo(X_train, y_train)
+
+        st.success("✅ Modelo treinado com sucesso!")
+
+        # ===============================
+        # PREDIÇÕES
+        # ===============================
+        if X_test is not None:
+            st.subheader("📊 Geração de Predições")
+            predicoes = gerar_predicoes(modelo, X_test, targets)
+
+            st.write("### Amostra de predições:")
+            st.dataframe(predicoes.head())
+
+            # opção para exportar predições
+            csv = predicoes.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Baixar Predições para API", csv, "predicoes.csv", "text/csv")
+
+            st.info("Envie o arquivo gerado para a API de avaliação para obter as métricas finais.")
 
     except Exception as e:
         tb = traceback.format_exc()
         st.error("❌ Ocorreu um erro no processamento.")
         st.code(tb)
         print(tb, file=sys.stderr)
-
