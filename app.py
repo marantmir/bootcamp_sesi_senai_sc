@@ -1,90 +1,67 @@
-"""
-🔧 Sistema Inteligente de Manutenção Preditiva
------------------------------------------------
-Interface em Streamlit para carregar dados, pré-processar,
-treinar modelos e gerar predições multirrótulo para avaliação.
-"""
-
+# app.py
 import streamlit as st
-import traceback
-import sys
+import traceback, sys
 import pandas as pd
+from utils import carregar_e_processar_dados, preprocess_pipeline
+from modelos import comparar_e_treinar_modelos, gerar_predicoes_para_submissao
 
-from utils import carregar_e_processar_dados, preprocessar_dados
-from modelos import treinar_modelo, gerar_predicoes
-
-
-# ===============================
-# CONFIGURAÇÃO DO APP
-# ===============================
-st.set_page_config(
-    page_title="🔧 Manutenção Preditiva",
-    page_icon="🤖",
-    layout="wide"
-)
-
+st.set_page_config(page_title="🔧 Manutenção Preditiva", page_icon="🔧", layout="wide")
 st.title("🔧 Sistema Inteligente de Manutenção Preditiva")
-st.markdown("Carregue seus dados de **treino** e (opcionalmente) de **teste** para iniciar.")
 
-# ===============================
-# UPLOAD DE ARQUIVOS
-# ===============================
-arquivo_treino = st.file_uploader("📂 Selecione o arquivo de TREINO (CSV)", type=["csv"])
-arquivo_teste = st.file_uploader("📂 Selecione o arquivo de TESTE (CSV) [opcional]", type=["csv"])
+st.markdown("""
+Carregue o arquivo de treino (obrigatório) e o arquivo de teste (opcional).
+O app fará pré-processamento, comparará modelos (RandomForest, LightGBM, XGBoost quando disponíveis)
+e permitirá exportar predições no formato esperado pela API do Bootcamp.
+""")
+
+arquivo_treino = st.file_uploader("📂 Selecione Bootcamp_train.csv", type=["csv"])
+arquivo_teste = st.file_uploader("📂 Selecione Bootcamp_test.csv (opcional)", type=["csv"])
 
 if arquivo_treino:
     try:
         treino_df = carregar_e_processar_dados(arquivo_treino)
         teste_df = carregar_e_processar_dados(arquivo_teste) if arquivo_teste else None
 
-        st.success("✅ Arquivo(s) carregado(s) com sucesso!")
-        st.write("### Pré-visualização dos dados de treino:")
+        st.success("✅ Arquivo(s) carregado(s)")
+        st.write("Preview treino:")
         st.dataframe(treino_df.head())
 
-        # ===============================
-        # PRÉ-PROCESSAMENTO
-        # ===============================
-        st.subheader("⚙️ Pré-processamento dos Dados")
+        with st.expander("⚙️ Configurações de pré-processamento"):
+            st.write("Targets padrão: fdf, fdc, fp, fte, fa")
+            threshold = st.slider("Threshold de decisão (para modelos probabilísticos)", 0.0, 1.0, 0.5)
 
-        X_train, X_test, y_train, y_test, scaler, features, targets = preprocessar_dados(
-            treino_df,
-            teste_df,
-            verbose=True
+        st.info("Iniciando pré-processamento e comparação de modelos. Isso pode levar alguns minutos.")
+
+        X_train, X_val, y_train, y_val, X_test_proc, preprocess_objects, feature_names, targets = preprocess_pipeline(
+            treino_df, teste_df, verbose=True
         )
 
-        st.success("✅ Pré-processamento concluído com sucesso!")
-        st.write("**Dimensões:**")
-        st.write(f"Treino: {X_train.shape}, Teste: {X_test.shape if X_test is not None else 'Não fornecido'}")
+        st.write("Dimensões:", X_train.shape, X_val.shape)
+        st.write("Features usadas:", feature_names)
+        st.write("Targets:", targets)
 
-        st.write("**Colunas utilizadas no modelo:**")
-        st.code(features)
+        # Treinar e comparar modelos
+        results, best_model = comparar_e_treinar_modelos(X_train, y_train, X_val, y_val)
 
-        # ===============================
-        # TREINAMENTO DO MODELO
-        # ===============================
-        st.subheader("🤖 Treinamento do Modelo")
-        modelo = treinar_modelo(X_train, y_train)
+        st.write("## ✅ Resultados da comparação")
+        st.dataframe(pd.DataFrame(results).sort_values(by="mean_f1", ascending=False).reset_index(drop=True))
 
-        st.success("✅ Modelo treinado com sucesso!")
+        st.success(f"Melhor modelo: {results[0]['model_name']} (ver primeira linha da tabela)")
 
-        # ===============================
-        # PREDIÇÕES
-        # ===============================
-        if X_test is not None:
-            st.subheader("📊 Geração de Predições")
-            predicoes = gerar_predicoes(modelo, X_test, targets)
-
-            st.write("### Amostra de predições:")
-            st.dataframe(predicoes.head())
-
-            # opção para exportar predições
-            csv = predicoes.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Baixar Predições para API", csv, "predicoes.csv", "text/csv")
-
-            st.info("Envie o arquivo gerado para a API de avaliação para obter as métricas finais.")
+        if X_test_proc is not None:
+            st.subheader("📊 Gerar predições para o conjunto de teste")
+            df_pred = gerar_predicoes_para_submissao(best_model, X_test_proc, targets, original_test_df=teste_df)
+            st.write("Amostra das predições:")
+            st.dataframe(df_pred.head())
+            csv = df_pred.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Baixar predições (.csv)", csv, "predicoes_submission.csv", "text/csv")
+        else:
+            st.info("Nenhum arquivo de teste fornecido — você pode fazer upload ou usar 'train_and_select.py' localmente depois.")
 
     except Exception as e:
         tb = traceback.format_exc()
-        st.error("❌ Ocorreu um erro no processamento.")
+        st.error("❌ Erro no processamento")
         st.code(tb)
         print(tb, file=sys.stderr)
+else:
+    st.info("Faça upload do Bootcamp_train.csv para começar.")
