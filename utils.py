@@ -1,3 +1,4 @@
+# utils.py (VERSÃO ROBUSTA)
 import pandas as pd
 import unicodedata, re
 import numpy as np
@@ -30,10 +31,8 @@ def _is_binary_series(s: pd.Series) -> bool:
     vals = s.dropna().unique()
     if len(vals) == 0:
         return False
-    # Normalize values to ints 0/1 if possible
     mapped = set()
     for v in vals:
-        # strings "0"/"1"
         if isinstance(v, str):
             v2 = v.strip()
             if v2 in ("0", "1"):
@@ -43,7 +42,6 @@ def _is_binary_series(s: pd.Series) -> bool:
         else:
             try:
                 iv = int(v)
-                # allow floats that are integral 0/1 as well
                 if float(v) != iv:
                     return False
                 if iv in (0, 1):
@@ -55,16 +53,9 @@ def _is_binary_series(s: pd.Series) -> bool:
     return mapped.issubset({0, 1})
 
 # -------------------
-# Função para detectar colunas de falha (aliases + heurística binária)
+# Detectar possíveis colunas de falha
 # -------------------
 def detect_failure_columns(df_train: pd.DataFrame) -> Dict:
-    """
-    Tenta mapear automaticamente os 5 alvos (fdf, fdc, fp, fte, fa).
-    Retorna um dict com:
-      - detected_map: {canonical: coluna_encontrada_or_None}
-      - candidate_binary_cols: lista de colunas binárias 0/1 (candidatas)
-      - all_columns: lista completa de colunas no df
-    """
     canonical = ["fdf", "fdc", "fp", "fte", "fa"]
     alias_targets = {
         "fdf": ["fdf", "falha_desgaste_ferramenta", "falhadesgasteferramenta", "f_df"],
@@ -80,7 +71,6 @@ def detect_failure_columns(df_train: pd.DataFrame) -> Dict:
         found = next((c for c in cols if c in alias_targets.get(can, [])), None)
         detected[can] = found
 
-    # heurística: detectar colunas 0/1
     excluded = set(["id", "id_produto", "falha_maquina"])
     candidate_binary_cols = [c for c in cols if c not in excluded and _is_binary_series(df_train[c])]
 
@@ -91,7 +81,67 @@ def detect_failure_columns(df_train: pd.DataFrame) -> Dict:
     }
 
 # -------------------
-# Pipeline principal (aceita target_columns manual opcional)
+# Conversão robusta para 0/1
+# -------------------
+def _coerce_to_binary_series(s: pd.Series, col_name: str, verbose: bool = False) -> pd.Series:
+    """
+    Converte uma Series para 0/1 de forma robusta:
+    - aceita bool, numeric (>=0.5 -> 1), strings com '1','0','sim','nao','yes','no' etc.
+    - se houver valores não mapeáveis em proporção >5%, lança ValueError com exemplos.
+    - caso contrário, preenche ambíguos com 0 (com aviso se verbose=True).
+    """
+    # Se já booleano
+    if pd.api.types.is_bool_dtype(s):
+        return s.astype(int)
+
+    # tentar converter números diretamente
+    s_nonnull = s.dropna()
+    if len(s_nonnull) == 0:
+        # tudo vazio -> zeros
+        return pd.Series(0, index=s.index, dtype=int)
+
+    num = pd.to_numeric(s_nonnull, errors='coerce')
+    num_ratio = num.notna().sum() / len(s_nonnull)
+
+    if num_ratio >= 0.9:
+        # maioria numérica -> considerar threshold 0.5
+        full_num = pd.to_numeric(s, errors='coerce').fillna(0)
+        return (full_num >= 0.5).astype(int)
+
+    # senão, mapear strings comuns
+    s_str = s.fillna("").astype(str).str.strip().str.lower()
+    mapping = {
+        '1':1, '0':0, 'true':1, 'false':0, 'sim':1, 's':1, 'nao':0, 'não':0, 'n':0,
+        'yes':1, 'no':0, 'y':1, 't':1, 'f':0
+    }
+    mapped = s_str.map(mapping)
+
+    # tentar converter os que ainda ficaram como NA por coercção numérica
+    remaining = mapped.isna()
+    if remaining.any():
+        num2 = pd.to_numeric(s_str[remaining], errors='coerce')
+        mapped.loc[remaining] = (num2 >= 0.5).astype('Int64')
+
+    missing_count = int(mapped.isna().sum())
+    total = len(mapped)
+    if missing_count > 0:
+        missing_ratio = missing_count / total
+        sample_bad = pd.Series(s[ mapped.isna() ].unique()).tolist()[:10]
+        # se muitos valores ambíguos, relatar erro
+        if missing_ratio > 0.05:
+            raise ValueError(
+                f"Coluna target '{col_name}' contém {missing_count}/{total} ({missing_ratio:.1%}) valores não mapeáveis. Exemplos: {sample_bad}. "
+                "Corrija o CSV ou passe explicitamente os nomes das colunas de target."
+            )
+        # se for pouquíssimos, preenche com 0 (mas avisa)
+        if verbose:
+            print(f"[WARN] Coluna '{col_name}' teve {missing_count} valores ambíguos; preenchendo com 0. Exemplos: {sample_bad}")
+        mapped = mapped.fillna(0)
+
+    return mapped.astype(int)
+
+# -------------------
+# Pipeline principal
 # -------------------
 def preprocess_pipeline(
     treino_df: pd.DataFrame,
@@ -99,18 +149,11 @@ def preprocess_pipeline(
     target_columns: Optional[List[str]] = None,
     verbose: bool = False
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Optional[pd.DataFrame], dict, List[str], List[str]]:
-    """
-    - Se target_columns for fornecido, usa esses nomes diretamente (ordem: [fdf, fdc, fp, fte, fa]).
-    - Caso contrário, tenta mapear automaticamente com detect_failure_columns.
-    Retorna:
-      X_train, X_val, y_train, y_val, X_test_scaled, preprocess_objects, feature_names, detected_targets_actual
-    """
     canonical = ["fdf", "fdc", "fp", "fte", "fa"]
     df_train = treino_df.copy()
     df_test = teste_df.copy() if teste_df is not None else None
 
     if target_columns is not None:
-        # target_columns pode ser lista de nomes reais (já normalizados) na ordem canônica
         if not isinstance(target_columns, list) or len(target_columns) != len(canonical):
             raise ValueError("Se passar target_columns, forneça lista com 5 nomes na ordem: fdf, fdc, fp, fte, fa")
         for c in target_columns:
@@ -123,20 +166,16 @@ def preprocess_pipeline(
         missing = [k for k, v in mapped.items() if v is None]
 
         if len(missing) == 0:
-            # todos mapeados
             detected_actual = [mapped[k] for k in canonical]
         else:
-            # preencha faltantes com candidatas binárias (caso existam)
             candidates = [c for c in detection["candidate_binary_cols"] if c not in mapped.values()]
             if len(candidates) >= len(missing):
-                # atribuir candidatos aos missing (ordem por média decrescente para priorizar colunas com mais ocorrências)
                 cand_sorted = sorted(candidates, key=lambda c: df_train[c].mean(), reverse=True)
                 assigned = {}
                 i = 0
                 for m in missing:
                     assigned[m] = cand_sorted[i]
                     i += 1
-                # construir lista final na ordem canônica
                 detected_actual = []
                 for can in canonical:
                     if mapped[can] is not None:
@@ -144,13 +183,9 @@ def preprocess_pipeline(
                     else:
                         detected_actual.append(assigned[can])
             else:
-                # não conseguiu mapear automaticamente todos
                 raise KeyError(
                     f"Não foi possível mapear automaticamente todos os alvos. "
-                    f"Encontrei candidatos binários: {detection['candidate_binary_cols']}. "
-                    f"Mapeamento parcial: {mapped}. "
-                    "Você pode chamar preprocess_pipeline passando explicitamente `target_columns` (lista com os 5 nomes normalizados) "
-                    "ou usar a UI para mapear manualmente."
+                    f"Candidatos binários: {detection['candidate_binary_cols']}. Mapeamento parcial: {mapped}."
                 )
 
     if verbose:
@@ -160,14 +195,25 @@ def preprocess_pipeline(
     features = [c for c in df_train.columns if c not in detected_actual + drop_cols]
 
     X = df_train[features].copy()
-    y = df_train[detected_actual].astype(int).copy()
 
-    # one-hot para categóricas
+    # Converter cada coluna target de forma robusta
+    y_dict = {}
+    for col in detected_actual:
+        try:
+            y_col = _coerce_to_binary_series(df_train[col], col, verbose=verbose)
+            y_dict[col] = y_col
+        except Exception as e:
+            # propaga com contexto informativo
+            raise ValueError(f"Erro ao converter coluna alvo '{col}': {e}")
+
+    y = pd.DataFrame(y_dict)
+
+    # One-hot para categóricas
     cat_cols = [c for c in X.columns if X[c].dtype == "object"]
     if cat_cols:
         X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
 
-    # preparar teste
+    # Preparar X_test (se existir)
     if df_test is not None:
         X_test = df_test[[c for c in df_test.columns if c not in detected_actual + drop_cols]].copy()
         if cat_cols:
@@ -176,7 +222,7 @@ def preprocess_pipeline(
     else:
         X_test = None
 
-    # imputação + escalonamento
+    # Imputer + scaler
     imputer = SimpleImputer(strategy="median")
     X_imp = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
     scaler = StandardScaler()
@@ -188,7 +234,7 @@ def preprocess_pipeline(
     else:
         X_test_scaled = None
 
-    # split treino/val
+    # Split treino/val
     from sklearn.model_selection import train_test_split
     X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
 
