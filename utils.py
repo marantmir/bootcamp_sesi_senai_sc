@@ -1,137 +1,67 @@
-"""
-Módulo utilitário para pré-processamento de dados.
-Refatorado com boas práticas de engenharia de dados.
-"""
-
-import re
-import unicodedata
-from typing import Optional, Tuple, List
-
-import numpy as np
+# app.py
+import streamlit as st
+import traceback, sys
 import pandas as pd
-from sklearn.preprocessing import StandardScaler, LabelEncoder
+from utils import carregar_e_processar_dados, preprocess_pipeline
+from modelos import comparar_e_treinar_modelos, gerar_predicoes_para_submissao
 
+st.set_page_config(page_title="🔧 Manutenção Preditiva", page_icon="🔧", layout="wide")
+st.title("🔧 Sistema Inteligente de Manutenção Preditiva")
 
-# ===============================
-# FUNÇÕES AUXILIARES
-# ===============================
-def _normalize_col_name(col: str) -> str:
-    """Normaliza nomes de colunas (minúsculas, sem acentos, snake_case)."""
-    if col is None:
-        return ""
-    s = str(col).strip().lower()
-    s = unicodedata.normalize("NFKD", s)
-    s = s.encode("ascii", errors="ignore").decode("utf-8")
-    s = re.sub(r"[^\w]+", "_", s)
-    s = re.sub(r"__+", "_", s)
-    return s.strip("_")
+st.markdown("""
+Carregue o arquivo de treino (obrigatório) e o arquivo de teste (opcional).
+O app fará pré-processamento, comparará modelos (RandomForest, LightGBM, XGBoost quando disponíveis)
+e permitirá exportar predições no formato esperado pela API do Bootcamp.
+""")
 
+arquivo_treino = st.file_uploader("📂 Selecione Bootcamp_train.csv", type=["csv"])
+arquivo_teste = st.file_uploader("📂 Selecione Bootcamp_test.csv (opcional)", type=["csv"])
 
-# ===============================
-# LEITURA DE DADOS
-# ===============================
-def carregar_e_processar_dados(arquivo) -> pd.DataFrame:
-    """Carrega CSV e normaliza nomes das colunas."""
-    df = pd.read_csv(arquivo)
-    mapping = {c: _normalize_col_name(c) for c in df.columns}
-    df.rename(columns=mapping, inplace=True)
-    return df
+if arquivo_treino:
+    try:
+        treino_df = carregar_e_processar_dados(arquivo_treino)
+        teste_df = carregar_e_processar_dados(arquivo_teste) if arquivo_teste else None
 
+        st.success("✅ Arquivo(s) carregado(s)")
+        st.write("Preview treino:")
+        st.dataframe(treino_df.head())
 
-# ===============================
-# PRÉ-PROCESSAMENTO
-# ===============================
-def preprocessar_dados(
-    treino: pd.DataFrame,
-    teste: Optional[pd.DataFrame] = None,
-    possiveis_alvos: Optional[List[str]] = None,
-    verbose: bool = False
-) -> Tuple[pd.DataFrame, Optional[pd.DataFrame], np.ndarray, Optional[np.ndarray], StandardScaler, List[str]]:
-    """
-    Pré-processa os dados de treino e teste:
-    - Detecta coluna alvo automaticamente
-    - Alinha colunas entre treino e teste
-    - Imputa valores ausentes pela mediana
-    - Aplica StandardScaler
-    - Codifica labels
+        with st.expander("⚙️ Configurações de pré-processamento"):
+            st.write("Targets padrão: fdf, fdc, fp, fte, fa")
+            threshold = st.slider("Threshold de decisão (para modelos probabilísticos)", 0.0, 1.0, 0.5)
 
-    Retorna:
-    (X_train, X_test, y_train, y_test, scaler, features)
-    """
-    treino = treino.copy()
-    teste = teste.copy() if teste is not None else None
+        st.info("Iniciando pré-processamento e comparação de modelos. Isso pode levar alguns minutos.")
 
-    # possíveis nomes da coluna alvo
-    if possiveis_alvos is None:
-        possiveis_alvos = ["target", "label", "classe", "y", "falha", "fdf", "fdc", "fp", "fte", "fa"]
+        X_train, X_val, y_train, y_val, X_test_proc, preprocess_objects, feature_names, targets = preprocess_pipeline(
+            treino_df, teste_df, verbose=True
+        )
 
-    possiveis_alvos_norm = [_normalize_col_name(x) for x in possiveis_alvos]
+        st.write("Dimensões:", X_train.shape, X_val.shape)
+        st.write("Features usadas:", feature_names)
+        st.write("Targets:", targets)
 
-    # identificar coluna alvo
-    coluna_alvo = next((col for col in treino.columns if col in possiveis_alvos_norm), None)
-    if coluna_alvo is None:
-        coluna_alvo = treino.columns[-1]  # fallback
-        if verbose:
-            print(f"[WARN] Nenhuma coluna alvo conhecida encontrada. Usando '{coluna_alvo}'.")
+        # Treinar e comparar modelos
+        results, best_model = comparar_e_treinar_modelos(X_train, y_train, X_val, y_val)
 
-    # separar treino
-    if coluna_alvo not in treino.columns:
-        raise KeyError(f"A coluna alvo '{coluna_alvo}' não existe no dataset de treino.")
-    
-    y_train_raw = treino[coluna_alvo]
-    X_train_raw = treino.drop(columns=[coluna_alvo])
+        st.write("## ✅ Resultados da comparação")
+        st.dataframe(pd.DataFrame(results).sort_values(by="mean_f1", ascending=False).reset_index(drop=True))
 
-    # separar teste (se existir)
-    y_test_raw, X_test_raw = None, None
-    if teste is not None and not teste.empty:
-        if coluna_alvo in teste.columns:
-            y_test_raw = teste[coluna_alvo]
-            X_test_raw = teste.drop(columns=[coluna_alvo])
+        st.success(f"Melhor modelo: {results[0]['model_name']} (ver primeira linha da tabela)")
+
+        if X_test_proc is not None:
+            st.subheader("📊 Gerar predições para o conjunto de teste")
+            df_pred = gerar_predicoes_para_submissao(best_model, X_test_proc, targets, original_test_df=teste_df)
+            st.write("Amostra das predições:")
+            st.dataframe(df_pred.head())
+            csv = df_pred.to_csv(index=False).encode("utf-8")
+            st.download_button("📥 Baixar predições (.csv)", csv, "predicoes_submission.csv", "text/csv")
         else:
-            X_test_raw = teste.copy()
+            st.info("Nenhum arquivo de teste fornecido — você pode fazer upload ou usar 'train_and_select.py' localmente depois.")
 
-    # alinhar categorias
-    if X_test_raw is not None:
-        concat = pd.concat([X_train_raw, X_test_raw], axis=0, ignore_index=True, sort=False)
-    else:
-        concat = X_train_raw.copy()
-
-    concat_d = pd.get_dummies(concat)
-
-    split_index = len(X_train_raw)
-    X_train_d = concat_d.iloc[:split_index, :].reset_index(drop=True)
-    X_test_d = concat_d.iloc[split_index:, :].reset_index(drop=True) if X_test_raw is not None else None
-
-    # imputação
-    medians = X_train_d.median()
-    X_train_d.fillna(medians, inplace=True)
-    if X_test_d is not None:
-        X_test_d.fillna(medians, inplace=True)
-
-    # escalonamento
-    scaler = StandardScaler()
-    X_train = pd.DataFrame(scaler.fit_transform(X_train_d), columns=X_train_d.columns)
-    X_test = pd.DataFrame(scaler.transform(X_test_d), columns=X_test_d.columns) if X_test_d is not None else None
-
-    # label encoding
-    y_train, y_test = None, None
-    if y_train_raw is not None:
-        if pd.api.types.is_object_dtype(y_train_raw):
-            encoder = LabelEncoder()
-            encoder.fit(y_train_raw.astype(str))
-            y_train = encoder.transform(y_train_raw.astype(str))
-            if y_test_raw is not None:
-                y_test = [
-                    encoder.transform([v])[0] if v in encoder.classes_ else -1
-                    for v in y_test_raw.astype(str)
-                ]
-        else:
-            y_train = y_train_raw.values
-            y_test = y_test_raw.values if y_test_raw is not None else None
-
-    if verbose:
-        print(f"[INFO] X_train: {X_train.shape}, X_test: {X_test.shape if X_test is not None else 'None'}")
-        print(f"[INFO] Coluna alvo: {coluna_alvo}")
-
-    return X_train, X_test, y_train, y_test, scaler, list(X_train.columns)
-
+    except Exception as e:
+        tb = traceback.format_exc()
+        st.error("❌ Erro no processamento")
+        st.code(tb)
+        print(tb, file=sys.stderr)
+else:
+    st.info("Faça upload do Bootcamp_train.csv para começar.")
