@@ -1,8 +1,9 @@
-streamlit
+streamlit>=1.18.0
 pandas
 numpy
-matplotlib
-seaborn
 scikit-learn
+joblib
 lightgbm
 xgboost
+matplotlib
+seaborn
