@@ -73,11 +73,4 @@ if arquivo_treino:
             else:
                 st.info("Nenhum arquivo de teste fornecido — você pode fazer upload ou usar 'train_and_select.py' localmente depois.")
 
-    except Exception as e:
-        tb = traceback.format_exc()
-        st.error("❌ Erro no processamento")
-        st.code(tb)
-        print(tb, file=sys.stderr)
-else:
-    st.info("Faça upload do Bootcamp_train.csv para começar.")
 
