@@ -1,67 +1,70 @@
-# app.py
-import streamlit as st
-import traceback, sys
 import pandas as pd
-from utils import carregar_e_processar_dados, preprocess_pipeline
-from modelos import comparar_e_treinar_modelos, gerar_predicoes_para_submissao
+import unicodedata, re
+import numpy as np
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
 
-st.set_page_config(page_title="🔧 Manutenção Preditiva", page_icon="🔧", layout="wide")
-st.title("🔧 Sistema Inteligente de Manutenção Preditiva")
+def _normalize_col_name(col: str) -> str:
+    if col is None: return ""
+    s = str(col).strip().lower()
+    s = unicodedata.normalize("NFKD", s).encode("ascii","ignore").decode("utf-8")
+    s = re.sub(r"[^\w]+", "_", s)
+    s = re.sub(r"__+", "_", s).strip("_")
+    return s
 
-st.markdown("""
-Carregue o arquivo de treino (obrigatório) e o arquivo de teste (opcional).
-O app fará pré-processamento, comparará modelos (RandomForest, LightGBM, XGBoost quando disponíveis)
-e permitirá exportar predições no formato esperado pela API do Bootcamp.
-""")
+def carregar_e_processar_dados(file_like) -> pd.DataFrame:
+    df = pd.read_csv(file_like)
+    df.columns = [_normalize_col_name(c) for c in df.columns]
+    return df
 
-arquivo_treino = st.file_uploader("📂 Selecione Bootcamp_train.csv", type=["csv"])
-arquivo_teste = st.file_uploader("📂 Selecione Bootcamp_test.csv (opcional)", type=["csv"])
+def preprocess_pipeline(treino_df, teste_df=None, targets=None, verbose=False):
+    # targets padrão
+    if targets is None:
+        targets = ["fdf", "fdc", "fp", "fte", "fa"]
 
-if arquivo_treino:
-    try:
-        treino_df = carregar_e_processar_dados(arquivo_treino)
-        teste_df = carregar_e_processar_dados(arquivo_teste) if arquivo_teste else None
+    df_train = treino_df.copy()
+    df_test = teste_df.copy() if teste_df is not None else None
 
-        st.success("✅ Arquivo(s) carregado(s)")
-        st.write("Preview treino:")
-        st.dataframe(treino_df.head())
+    # checar targets
+    missing = [t for t in targets if t not in df_train.columns]
+    if missing:
+        raise KeyError(f"Rótulos faltando no treino: {missing}")
 
-        with st.expander("⚙️ Configurações de pré-processamento"):
-            st.write("Targets padrão: fdf, fdc, fp, fte, fa")
-            threshold = st.slider("Threshold de decisão (para modelos probabilísticos)", 0.0, 1.0, 0.5)
+    drop_cols = ["id", "id_produto", "falha_maquina"]
+    features = [c for c in df_train.columns if c not in targets + drop_cols]
 
-        st.info("Iniciando pré-processamento e comparação de modelos. Isso pode levar alguns minutos.")
+    X = df_train[features].copy()
+    y = df_train[targets].astype(int).copy()
 
-        X_train, X_val, y_train, y_val, X_test_proc, preprocess_objects, feature_names, targets = preprocess_pipeline(
-            treino_df, teste_df, verbose=True
-        )
+    # one-hot em categoricas
+    cat_cols = [c for c in X.columns if X[c].dtype == "object"]
+    if cat_cols:
+        X = pd.get_dummies(X, columns=cat_cols, drop_first=True)
 
-        st.write("Dimensões:", X_train.shape, X_val.shape)
-        st.write("Features usadas:", feature_names)
-        st.write("Targets:", targets)
+    # processar teste
+    if df_test is not None:
+        X_test = df_test[[c for c in df_test.columns if c not in targets + drop_cols]].copy()
+        if cat_cols:
+            X_test = pd.get_dummies(X_test, columns=cat_cols, drop_first=True)
+        # alinhar colunas
+        X, X_test = X.align(X_test, join='left', axis=1, fill_value=0)
+    else:
+        X_test = None
 
-        # Treinar e comparar modelos
-        results, best_model = comparar_e_treinar_modelos(X_train, y_train, X_val, y_val)
+    # imputer e scaler
+    imputer = SimpleImputer(strategy="median")
+    X_imp = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
+    scaler = StandardScaler()
+    X_scaled = pd.DataFrame(scaler.fit_transform(X_imp), columns=X_imp.columns)
 
-        st.write("## ✅ Resultados da comparação")
-        st.dataframe(pd.DataFrame(results).sort_values(by="mean_f1", ascending=False).reset_index(drop=True))
+    if X_test is not None:
+        X_test_imp = pd.DataFrame(imputer.transform(X_test), columns=X_test.columns)
+        X_test_scaled = pd.DataFrame(scaler.transform(X_test_imp), columns=X_test.columns)
+    else:
+        X_test_scaled = None
 
-        st.success(f"Melhor modelo: {results[0]['model_name']} (ver primeira linha da tabela)")
+    # split treino/val
+    from sklearn.model_selection import train_test_split
+    X_train, X_val, y_train, y_val = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=None)
 
-        if X_test_proc is not None:
-            st.subheader("📊 Gerar predições para o conjunto de teste")
-            df_pred = gerar_predicoes_para_submissao(best_model, X_test_proc, targets, original_test_df=teste_df)
-            st.write("Amostra das predições:")
-            st.dataframe(df_pred.head())
-            csv = df_pred.to_csv(index=False).encode("utf-8")
-            st.download_button("📥 Baixar predições (.csv)", csv, "predicoes_submission.csv", "text/csv")
-        else:
-            st.info("Nenhum arquivo de teste fornecido — você pode fazer upload ou usar 'train_and_select.py' localmente depois.")
-
-    except Exception as e:
-        tb = traceback.format_exc()
-        st.error("❌ Erro no processamento")
-        st.code(tb)
-        print(tb, file=sys.stderr)
-else:
-    st.info("Faça upload do Bootcamp_train.csv para começar.")
+    return X_train, X_val, y_train, y_val, X_test_scaled, {"imputer": imputer, "scaler": scaler}, list(X_train.columns), targets
